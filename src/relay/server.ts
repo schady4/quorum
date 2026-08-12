@@ -6,12 +6,16 @@
 
 import { WebSocketServer, WebSocket, type AddressInfo } from "ws";
 import type { Op } from "../core/crdt.js";
+import type { LedgerOp } from "../core/ledger.js";
 import { decode, encode, type ServerMsg } from "../net/protocol.js";
 
 interface Room {
-  /** Append-only op log, deduped by op id — the room's whole history. */
+  /** Append-only chat-surface op log, deduped by op id. */
   ops: Op[];
   seen: Set<string>;
+  /** Append-only ledger op log (fork/edit/merge), deduped by op id. */
+  ledgerOps: LedgerOp[];
+  ledgerSeen: Set<string>;
   /** Connected sockets and the handle each announced. */
   clients: Map<WebSocket, string>;
 }
@@ -34,7 +38,7 @@ export function startRelay(opts: RelayOptions): Promise<RelayHandle> {
   const room = (name: string): Room => {
     let r = rooms.get(name);
     if (!r) {
-      r = { ops: [], seen: new Set(), clients: new Map() };
+      r = { ops: [], seen: new Set(), ledgerOps: [], ledgerSeen: new Set(), clients: new Map() };
       rooms.set(name, r);
     }
     return r;
@@ -80,7 +84,7 @@ export function startRelay(opts: RelayOptions): Promise<RelayHandle> {
           r.clients.set(ws, msg.handle);
           joined = r;
           log(`+ ${msg.handle} joined ${msg.room} (${r.clients.size} here)`);
-          send(ws, { t: "welcome", room: msg.room, participants: roster(r), ops: r.ops });
+          send(ws, { t: "welcome", room: msg.room, participants: roster(r), ops: r.ops, ledgerOps: r.ledgerOps });
           broadcast(r, { t: "presence", participants: roster(r) });
           return;
         }
@@ -91,6 +95,15 @@ export function startRelay(opts: RelayOptions): Promise<RelayHandle> {
           joined.seen.add(op.id);
           joined.ops.push(op);
           broadcast(joined, { t: "op", op }, ws);
+          return;
+        }
+
+        if (msg.t === "ledger" && joined) {
+          const { op } = msg;
+          if (joined.ledgerSeen.has(op.id)) return;
+          joined.ledgerSeen.add(op.id);
+          joined.ledgerOps.push(op);
+          broadcast(joined, { t: "ledger", op }, ws);
         }
       });
 

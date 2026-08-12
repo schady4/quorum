@@ -3,6 +3,7 @@
 // job. Both directions are newline-free JSON frames over one WebSocket.
 
 import type { Op } from "../core/crdt.js";
+import type { LedgerOp } from "../core/ledger.js";
 
 /** client -> server, first frame after connecting. */
 export interface Hello {
@@ -11,18 +12,25 @@ export interface Hello {
   handle: string;
 }
 
-/** server -> client, the catch-up frame: full op log + who's here. */
+/** server -> client, the catch-up frame: both op logs + who's here. */
 export interface Welcome {
   t: "welcome";
   room: string;
   participants: string[];
   ops: Op[];
+  ledgerOps: LedgerOp[];
 }
 
-/** either direction: one CRDT op to integrate. */
+/** either direction: one CRDT (chat surface) op to integrate. */
 export interface OpFrame {
   t: "op";
   op: Op;
+}
+
+/** either direction: one DAG ledger op (fork / edit / merge). */
+export interface LedgerFrame {
+  t: "ledger";
+  op: LedgerOp;
 }
 
 /** server -> clients: the room roster changed. */
@@ -31,8 +39,8 @@ export interface Presence {
   participants: string[];
 }
 
-export type ClientMsg = Hello | OpFrame;
-export type ServerMsg = Welcome | OpFrame | Presence;
+export type ClientMsg = Hello | OpFrame | LedgerFrame;
+export type ServerMsg = Welcome | OpFrame | LedgerFrame | Presence;
 
 export function encode(msg: ClientMsg | ServerMsg): string {
   return JSON.stringify(msg);

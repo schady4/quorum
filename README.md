@@ -9,13 +9,13 @@ Model-agnostic by design. Claude, OpenAI, Meta/Llama, Kimi, and local /
 open-source models all plug in behind one adapter interface. Install once, wire
 up whichever providers you want.
 
-> Status: **M0–M3 landed** — the CRDT/DAG substrate is ported and tested, the
-> chat backbone works, an **AI participant** holds a seat and replies when
-> @mentioned, and the **router is multi-model with delegation**: all five
-> providers have a real `generate()`, `--provider` genuinely switches vendors,
-> and a seat can spin up another seat on a different model to own a subtask.
-> Left: packaging + first-run credential setup (M5) and DAG threads in chat
-> (M4). Plan and architecture live in the sibling repo —
+> Status: **M0–M4 landed** — substrate, chat backbone, AI participants,
+> multi-model router with delegation, and now **DAG threads inside live chat**:
+> a room carries a shared decision-state you can fork into branches, advance
+> independently, and merge — mechanically when edits are disjoint, or with a
+> single AI arbitration call when two branches collide. Only packaging +
+> first-run credential setup (M5) remains. Plan and architecture live in the
+> sibling repo —
 > [`multiplayer-ai/ROADMAP.md`](https://github.com/schady4/multiplayer-ai/blob/main/ROADMAP.md)
 > ([tracking epic](https://github.com/schady4/multiplayer-ai/issues/8)).
 
@@ -91,6 +91,23 @@ subtask. In the room:
 `claude` brings up a new seat named `scribe` on GPT-5; it joins the room as its
 own participant, does the task, and shares the result back to the group — the
 same way any seat does. Delegation nests: a spawned seat can delegate too.
+
+**Threads (fork / merge).** A room carries a shared decision-state — a small
+key/value store everyone converges on. From the input line:
+
+```
+/fork A B                       split the trunk into two branches
+/set A owner ada                advance branch A
+/set B deadline monday          advance branch B (concurrently)
+/merge A B                      reconcile back to trunk
+```
+
+Disjoint edits merge mechanically with zero inference. If two branches set the
+same key incompatibly, the merge escalates to a single AI arbitration call —
+but only if a seat with a provider is present (join with `--provider` to let
+your seat arbitrate). The resolved values ride inside the merge op, so every
+replica lands on the same trunk. The ledger panel shows trunk, branches, and
+recent history live.
 
 ## Adding a model provider
 

@@ -7,6 +7,7 @@
 import { EventEmitter } from "node:events";
 import { WebSocket } from "ws";
 import { createSurface, type CrdtSurface, type Entry, type InsertOp } from "../core/crdt.js";
+import { Ledger, type LedgerOp, type MergeResolver } from "../core/ledger.js";
 import { decode, encode } from "./protocol.js";
 
 let _seq = 0;
@@ -26,6 +27,7 @@ export interface RoomClientEvents {
 export class RoomClient extends EventEmitter {
   readonly clientId = newClientId();
   private surface: CrdtSurface = createSurface();
+  readonly ledger = new Ledger();
   private counter = 0;
   private ws: WebSocket | null = null;
   participants: string[] = [];
@@ -51,12 +53,17 @@ export class RoomClient extends EventEmitter {
       const msg = decode(data.toString());
       if (msg.t === "welcome") {
         for (const op of msg.ops) this.surface.apply(op);
+        for (const op of msg.ledgerOps) this.ledger.apply(op);
         this.participants = msg.participants;
         this.emit("presence", this.participants);
         this.emit("update", this.surface.entries());
+        this.emit("ledger", this.ledger);
       } else if (msg.t === "op") {
         this.surface.apply(msg.op);
         this.emit("update", this.surface.entries());
+      } else if (msg.t === "ledger") {
+        this.ledger.apply(msg.op);
+        this.emit("ledger", this.ledger);
       } else if (msg.t === "presence") {
         this.participants = msg.participants;
         this.emit("presence", this.participants);
@@ -83,6 +90,64 @@ export class RoomClient extends EventEmitter {
 
   entries(): Entry[] {
     return this.surface.entries();
+  }
+
+  private sendLedger(op: LedgerOp): void {
+    this.ledger.apply(op);
+    this.emit("ledger", this.ledger);
+    this.ws?.send(encode({ t: "ledger", op }));
+  }
+
+  /** Fork the trunk decision-state into named branches. */
+  fork(branches: string[]): void {
+    this.sendLedger({ id: `${this.clientId}:${++this.counter}`, type: "fork", branches });
+  }
+
+  /** Advance one branch by setting a decision key. */
+  setDecision(branch: string, key: string, value: string): void {
+    this.sendLedger({
+      id: `${this.clientId}:${++this.counter}`,
+      type: "edit",
+      branch,
+      key,
+      value,
+      author: this.handle,
+    });
+  }
+
+  /**
+   * Merge two branches. Non-overlapping edits reconcile mechanically; if the
+   * branches collide on a key and a resolver is supplied, it's called once (the
+   * single AI arbitration) and its resolution rides inside the broadcast op so
+   * every replica applies the same result. Returns whether arbitration ran.
+   */
+  async merge(a: string, b: string, resolver?: MergeResolver): Promise<{ conflicts: number; arbitrated: boolean }> {
+    const prep = this.ledger.prepareMerge(a, b);
+    let resolved = prep.merged;
+    let viaArbitration = false;
+    let rationale: string | undefined;
+
+    if (prep.conflicts.length) {
+      if (resolver) {
+        const r = await resolver(prep);
+        resolved = { ...prep.merged, ...r.resolved };
+        viaArbitration = true;
+        rationale = r.rationale;
+      } else {
+        rationale = "unresolved: no arbiter present (branches held at ancestor)";
+      }
+    }
+
+    this.sendLedger({
+      id: `${this.clientId}:${++this.counter}`,
+      type: "merge",
+      branches: [a, b],
+      resolved,
+      author: this.handle,
+      viaArbitration,
+      rationale,
+    });
+    return { conflicts: prep.conflicts.length, arbitrated: viaArbitration };
   }
 
   close(): void {

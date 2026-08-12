@@ -11,6 +11,7 @@ import { providers, getProvider } from "./providers/index.js";
 import { startRelay } from "./relay/server.js";
 import { runTui } from "./tui/app.js";
 import { spawnAgent } from "./agent/spawn.js";
+import { createMergeResolver } from "./agent/merge.js";
 import { loadCredentials, missingRequired } from "./config/credentials.js";
 
 const [, , cmd, ...rest] = process.argv;
@@ -32,7 +33,8 @@ function usage(): void {
 
 Usage:
   quorum host [--port <n>]                     Start a relay/room server (default 8787)
-  quorum join <room> [--as <handle>] [--relay <url>]   Join a room
+  quorum join <room> [--as <handle>] [--relay <url>] [--provider <id>] [--model <id>]
+                                               Join a room (provider enables merge arbitration)
   quorum agent <room> [--as <handle>] [--provider <id>] [--model <id>] [--relay <url>]
                                                Seat an AI participant in a room
   quorum setup                                 Configure model providers + keys     (M5)
@@ -75,7 +77,9 @@ function join(args: string[]): void {
   }
   const handle = flags.as ?? `guest-${Math.random().toString(36).slice(2, 6)}`;
   const relayUrl = flags.relay ?? "ws://localhost:8787";
-  runTui({ relayUrl, room, handle });
+  // With a provider, this seat can arbitrate semantic merge collisions.
+  const resolver = flags.provider ? createMergeResolver({ providerId: flags.provider, model: flags.model }) : undefined;
+  runTui({ relayUrl, room, handle, resolver });
 }
 
 function agent(args: string[]): void {

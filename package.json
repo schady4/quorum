@@ -21,6 +21,9 @@
     "test:net": "tsx test/relay.test.ts",
     "test:agent": "tsx test/agent.test.ts",
     "test:delegate": "tsx test/delegate.test.ts",
+    "test:ledger": "tsx test/ledger.test.ts",
+    "test:session": "tsx test/session.test.ts",
+    "test:all": "npm run test && npm run test:net && npm run test:agent && npm run test:delegate && npm run test:ledger && npm run test:session",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [

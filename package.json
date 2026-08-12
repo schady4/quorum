@@ -17,6 +17,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/cli.ts",
+    "test": "tsx test/core.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [

@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "description": "Multiplayer AI in your terminal — friends and multiple AI models share one live chat session on a CRDT + DAG substrate. Model-agnostic, MCP-native.",
   "author": "Jarett Schadlich",
-  "license": "MIT",
+  "license": "CC-BY-NC-4.0",
   "type": "module",
   "bin": {
     "quorum": "./dist/cli.js"

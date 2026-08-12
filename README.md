@@ -149,4 +149,7 @@ npm run typecheck
 
 ## License
 
-MIT © Jarett Schadlich
+Licensed under [Creative Commons Attribution-NonCommercial 4.0 International
+(CC BY-NC 4.0)](LICENSE) © Jarett Schadlich. You may share and adapt the work
+with attribution, but **not for commercial purposes** — commercial use requires
+separate permission from Jarett Schadlich.

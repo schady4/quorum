@@ -18,6 +18,7 @@
     "build": "tsc",
     "dev": "tsx src/cli.ts",
     "test": "tsx test/core.test.ts",
+    "test:net": "tsx test/relay.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [
@@ -33,7 +34,14 @@
   ],
   "devDependencies": {
     "@types/node": "^26.2.0",
+    "@types/react": "^19.2.18",
+    "@types/ws": "^8.18.1",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0"
+  },
+  "dependencies": {
+    "ink": "^7.1.1",
+    "react": "^19.2.8",
+    "ws": "^8.21.3"
   }
 }

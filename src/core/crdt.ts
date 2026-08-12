@@ -44,14 +44,24 @@ interface Node {
   id: OpId;
   value: string;
   after: OpId;
+  author: string;
   deleted: boolean;
+}
+
+/** A visible element in sequence order. For the chat stream, one per message. */
+export interface Entry {
+  id: OpId;
+  value: string;
+  author: string;
 }
 
 export interface CrdtSurface {
   /** Integrate one op. Idempotent — applying the same op twice is a no-op. */
   apply(op: Op): void;
-  /** Materialize the converged text. */
+  /** Materialize the converged text (concatenated element values). */
   toString(): string;
+  /** Visible (non-deleted) elements in sequence order, with author. */
+  entries(): Entry[];
   /** Visible (non-deleted) element ids, in sequence order. */
   visibleIds(): OpId[];
   /** The id to anchor an append to (last visible element, or ROOT if empty). */
@@ -70,7 +80,13 @@ class Surface implements CrdtSurface {
 
   private integrateInsert(op: InsertOp): void {
     if (this.nodes.has(op.id)) return; // idempotent
-    this.nodes.set(op.id, { id: op.id, value: op.value, after: op.after, deleted: false });
+    this.nodes.set(op.id, {
+      id: op.id,
+      value: op.value,
+      after: op.after,
+      author: op.author,
+      deleted: false,
+    });
 
     // Register under its parent, holding the sibling list in a fixed total
     // order (descending id) so every replica lays concurrent inserts out the
@@ -107,6 +123,12 @@ class Surface implements CrdtSurface {
     let s = "";
     for (const n of this.walk()) if (!n.deleted) s += n.value;
     return s;
+  }
+
+  entries(): Entry[] {
+    return this.walk()
+      .filter((n) => !n.deleted)
+      .map((n) => ({ id: n.id, value: n.value, author: n.author }));
   }
 
   visibleIds(): OpId[] {

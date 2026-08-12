@@ -9,10 +9,12 @@ Model-agnostic by design. Claude, OpenAI, Meta/Llama, Kimi, and local /
 open-source models all plug in behind one adapter interface. Install once, wire
 up whichever providers you want.
 
-> Status: **scaffold.** The architecture and milestone plan live in the sibling
+> Status: **M0 + M1 landed** — the CRDT/DAG substrate is ported and tested, and
+> the chat backbone works: run a relay and join a room from multiple terminals
+> to share one converged message stream. AI participants (M2) and the model
+> router (M3) are next. The architecture and milestone plan live in the sibling
 > repo — [`multiplayer-ai/ROADMAP.md`](https://github.com/schady4/multiplayer-ai/blob/main/ROADMAP.md)
-> ([tracking epic](https://github.com/schady4/multiplayer-ai/issues/8)). Quorum
-> is the shipping CLI that plan produces.
+> ([tracking epic](https://github.com/schady4/multiplayer-ai/issues/8)).
 
 Built by **Jarett Schadlich**.
 
@@ -47,14 +49,25 @@ is collected for providers you don't use.
 ## Commands
 
 ```
-quorum host [--port <n>]              Start a relay/room server            (M1)
-quorum join <room> [--as <handle>]    Join a room from your terminal       (M1)
-quorum setup                          Configure providers + credentials    (M5)
-quorum providers                      List installable model providers
-quorum --help                         Usage
+quorum host [--port <n>]                             Start a relay/room server   ✓
+quorum join <room> [--as <handle>] [--relay <url>]   Join a room                 ✓
+quorum setup                                         Configure providers + keys  (M5)
+quorum providers                                     List installable providers  ✓
+quorum --help                                        Usage
 ```
 
-`quorum providers` works today against the scaffold.
+Try it locally — one relay, two seats sharing a converged room:
+
+```bash
+npm run build
+node dist/cli.js host                 # terminal 1
+node dist/cli.js join lobby --as ada  # terminal 2
+node dist/cli.js join lobby --as bob  # terminal 3
+```
+
+Type in either seat; both windows converge. A late joiner catches up from the
+relay's op log. (During development, swap `node dist/cli.js` for
+`npm run dev --`.)
 
 ## Adding a model provider
 

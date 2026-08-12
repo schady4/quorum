@@ -19,6 +19,7 @@
     "dev": "tsx src/cli.ts",
     "test": "tsx test/core.test.ts",
     "test:net": "tsx test/relay.test.ts",
+    "test:agent": "tsx test/agent.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [

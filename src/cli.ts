@@ -7,9 +7,12 @@
 //   quorum providers                            list installable providers
 //   quorum --help                               usage
 
-import { providers } from "./providers/index.js";
+import { providers, getProvider } from "./providers/index.js";
 import { startRelay } from "./relay/server.js";
 import { runTui } from "./tui/app.js";
+import { AgentSeat } from "./agent/seat.js";
+import { createModelResponder } from "./agent/responder.js";
+import { loadCredentials, missingRequired } from "./config/credentials.js";
 
 const [, , cmd, ...rest] = process.argv;
 
@@ -31,12 +34,15 @@ function usage(): void {
 Usage:
   quorum host [--port <n>]                     Start a relay/room server (default 8787)
   quorum join <room> [--as <handle>] [--relay <url>]   Join a room
+  quorum agent <room> [--as <handle>] [--provider <id>] [--model <id>] [--relay <url>]
+                                               Seat an AI participant in a room
   quorum setup                                 Configure model providers + keys     (M5)
   quorum providers                             List installable model providers
   quorum --help                                Show this help
 
-Try it locally: run \`quorum host\` in one terminal, then
-\`quorum join lobby --as you\` in two others.
+Try it locally: run \`quorum host\`, then \`quorum join lobby --as you\` in one
+terminal and \`quorum agent lobby --as claude\` in another. Mention @claude to
+talk to it (needs the provider's API key in the environment).
 `);
 }
 
@@ -73,6 +79,41 @@ function join(args: string[]): void {
   runTui({ relayUrl, room, handle });
 }
 
+function agent(args: string[]): void {
+  const { positionals, flags } = parse(args);
+  const room = positionals[0];
+  if (!room) {
+    console.error("Usage: quorum agent <room> [--as <handle>] [--provider <id>] [--model <id>] [--relay <url>]");
+    process.exit(1);
+  }
+  const handle = flags.as ?? "claude";
+  const providerId = flags.provider ?? "anthropic";
+  const model = flags.model;
+  const relayUrl = flags.relay ?? "ws://localhost:8787";
+
+  const provider = getProvider(providerId);
+  if (!provider) {
+    console.error(`Unknown provider "${providerId}". Run \`quorum providers\` to list them.`);
+    process.exit(1);
+  }
+  const missing = missingRequired(provider, loadCredentials(provider));
+  if (missing.length) {
+    console.error(`Warning: ${provider.id} is missing ${missing.join(", ")} — set them as env vars or the seat can't reply.`);
+  }
+
+  const respond = createModelResponder({ providerId, model });
+  const seat = new AgentSeat({
+    relayUrl,
+    room,
+    handle,
+    respond,
+    onReply: (t) => console.error(`${handle} ▸ ${t}`),
+    onError: (e) => console.error(`[${handle}] ${e.message}`),
+  });
+  seat.start();
+  console.error(`AI seat "${handle}" joined ${room} via ${providerId}${model ? "/" + model : ""}. Mention @${handle} to talk to it.`);
+}
+
 async function main(): Promise<void> {
   switch (cmd) {
     case "providers":
@@ -83,6 +124,9 @@ async function main(): Promise<void> {
       break;
     case "join":
       join(rest);
+      break;
+    case "agent":
+      agent(rest);
       break;
     case "setup":
       console.error("`quorum setup` arrives in M5 — for now, providers read keys from the environment.");

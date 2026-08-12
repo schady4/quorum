@@ -9,11 +9,13 @@ Model-agnostic by design. Claude, OpenAI, Meta/Llama, Kimi, and local /
 open-source models all plug in behind one adapter interface. Install once, wire
 up whichever providers you want.
 
-> Status: **M0 + M1 landed** — the CRDT/DAG substrate is ported and tested, and
-> the chat backbone works: run a relay and join a room from multiple terminals
-> to share one converged message stream. AI participants (M2) and the model
-> router (M3) are next. The architecture and milestone plan live in the sibling
-> repo — [`multiplayer-ai/ROADMAP.md`](https://github.com/schady4/multiplayer-ai/blob/main/ROADMAP.md)
+> Status: **M0–M2 landed** — the CRDT/DAG substrate is ported and tested, the
+> chat backbone works (run a relay, join from multiple terminals, share one
+> converged stream), and an **AI participant** can hold a seat: it joins like
+> any client, answers when @mentioned, and replies through a model provider.
+> The model router (M3) that lets it delegate across models is next. The
+> architecture and milestone plan live in the sibling repo —
+> [`multiplayer-ai/ROADMAP.md`](https://github.com/schady4/multiplayer-ai/blob/main/ROADMAP.md)
 > ([tracking epic](https://github.com/schady4/multiplayer-ai/issues/8)).
 
 Built by **Jarett Schadlich**.
@@ -51,23 +53,31 @@ is collected for providers you don't use.
 ```
 quorum host [--port <n>]                             Start a relay/room server   ✓
 quorum join <room> [--as <handle>] [--relay <url>]   Join a room                 ✓
+quorum agent <room> [--as <h>] [--provider <id>] [--model <id>]   Seat an AI     ✓
 quorum setup                                         Configure providers + keys  (M5)
 quorum providers                                     List installable providers  ✓
 quorum --help                                        Usage
 ```
 
-Try it locally — one relay, two seats sharing a converged room:
+Try it locally — a relay, a human, and an AI seat sharing one converged room:
 
 ```bash
 npm run build
-node dist/cli.js host                 # terminal 1
-node dist/cli.js join lobby --as ada  # terminal 2
-node dist/cli.js join lobby --as bob  # terminal 3
+node dist/cli.js host                          # terminal 1 — the relay
+node dist/cli.js join lobby --as ada           # terminal 2 — you
+ANTHROPIC_API_KEY=sk-... \
+  node dist/cli.js agent lobby --as claude     # terminal 3 — an AI seat
 ```
 
-Type in either seat; both windows converge. A late joiner catches up from the
-relay's op log. (During development, swap `node dist/cli.js` for
+Type in your seat; both windows converge. Say `@claude ...` to talk to the AI —
+it reads the shared stream and replies into it. A late joiner catches up from
+the relay's op log. (During development, swap `node dist/cli.js` for
 `npm run dev --`.)
+
+The AI seat is model-agnostic: `--provider openai|meta|kimi|local` selects the
+vendor (once its adapter's `generate()` is implemented — Anthropic is wired
+first), and `--model` picks the model. Credentials come from the environment
+for now; `quorum setup` (M5) will prompt for them.
 
 ## Adding a model provider
 

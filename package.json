@@ -9,13 +9,27 @@
     "quorum": "./dist/cli.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "LICENSE"
   ],
   "engines": {
     "node": ">=18"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/schady4/quorum.git"
+  },
+  "homepage": "https://github.com/schady4/quorum#readme",
+  "bugs": {
+    "url": "https://github.com/schady4/quorum/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsc",
+    "prepublishOnly": "npm run build",
     "dev": "tsx src/cli.ts",
     "test": "tsx test/core.test.ts",
     "test:net": "tsx test/relay.test.ts",
@@ -23,7 +37,8 @@
     "test:delegate": "tsx test/delegate.test.ts",
     "test:ledger": "tsx test/ledger.test.ts",
     "test:session": "tsx test/session.test.ts",
-    "test:all": "npm run test && npm run test:net && npm run test:agent && npm run test:delegate && npm run test:ledger && npm run test:session",
+    "test:config": "tsx test/config.test.ts",
+    "test:all": "npm run test && npm run test:net && npm run test:agent && npm run test:delegate && npm run test:ledger && npm run test:session && npm run test:config",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [

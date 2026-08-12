@@ -9,13 +9,12 @@ Model-agnostic by design. Claude, OpenAI, Meta/Llama, Kimi, and local /
 open-source models all plug in behind one adapter interface. Install once, wire
 up whichever providers you want.
 
-> Status: **M0–M4 landed** — substrate, chat backbone, AI participants,
-> multi-model router with delegation, and now **DAG threads inside live chat**:
-> a room carries a shared decision-state you can fork into branches, advance
-> independently, and merge — mechanically when edits are disjoint, or with a
-> single AI arbitration call when two branches collide. Only packaging +
-> first-run credential setup (M5) remains. Plan and architecture live in the
-> sibling repo —
+> Status: **feature-complete (M0–M5).** Substrate, chat backbone, AI
+> participants, multi-model router with delegation, DAG threads in live chat,
+> and now packaging: `quorum setup` prompts for the credentials of whichever
+> providers you enable and stores them locally, and the package publishes to
+> npm so friends install it in one line. 47 tests across 7 suites. Plan and
+> architecture live in the sibling repo —
 > [`multiplayer-ai/ROADMAP.md`](https://github.com/schady4/multiplayer-ai/blob/main/ROADMAP.md)
 > ([tracking epic](https://github.com/schady4/multiplayer-ai/issues/8)).
 
@@ -46,8 +45,18 @@ npx @schady4/quorum --help
 npm install -g @schady4/quorum
 ```
 
-First run prompts for credentials for whichever providers you enable — nothing
-is collected for providers you don't use.
+Then configure whichever models you want:
+
+```bash
+npx @schady4/quorum setup
+```
+
+`setup` walks the providers, asks which to enable, and prompts for each one's
+keys (secrets masked). Values are written to `~/.quorum/credentials.json`
+(owner-only) and sent straight to each provider — nothing is collected for
+providers you don't use, and nothing leaves your machine except the API calls
+themselves. A one-off `ANTHROPIC_API_KEY=… quorum agent …` env var overrides the
+stored value.
 
 ## Commands
 
@@ -55,7 +64,7 @@ is collected for providers you don't use.
 quorum host [--port <n>]                             Start a relay/room server   ✓
 quorum join <room> [--as <handle>] [--relay <url>]   Join a room                 ✓
 quorum agent <room> [--as <h>] [--provider <id>] [--model <id>]   Seat an AI     ✓
-quorum setup                                         Configure providers + keys  (M5)
+quorum setup                                         Configure providers + keys  ✓
 quorum providers                                     List installable providers  ✓
 quorum --help                                        Usage
 ```

@@ -1,14 +1,16 @@
-// Credential loading. For now, credentials come from the environment; the
-// first-run `quorum setup` flow (M5) will collect and store them, using each
-// adapter's declared `credentials` to know what to ask for.
+// Credential loading. Values come from two places: the environment and the
+// local store written by `quorum setup`. The environment wins, so a one-off
+// `ANTHROPIC_API_KEY=… quorum agent …` overrides whatever is saved.
 
 import type { ProviderAdapter } from "../providers/types.js";
+import { loadStore } from "./store.js";
 
-/** Pull the credentials an adapter declares out of the environment. */
+/** Resolve an adapter's declared credentials from env, then the local store. */
 export function loadCredentials(provider: ProviderAdapter): Record<string, string> {
+  const store = loadStore();
   const out: Record<string, string> = {};
   for (const c of provider.credentials) {
-    const v = process.env[c.key];
+    const v = process.env[c.key] ?? store[c.key];
     if (v) out[c.key] = v;
   }
   return out;

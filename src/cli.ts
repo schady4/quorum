@@ -13,6 +13,7 @@ import { runTui } from "./tui/app.js";
 import { spawnAgent } from "./agent/spawn.js";
 import { createMergeResolver } from "./agent/merge.js";
 import { loadCredentials, missingRequired } from "./config/credentials.js";
+import { runSetup } from "./config/setup.js";
 
 const [, , cmd, ...rest] = process.argv;
 
@@ -37,7 +38,7 @@ Usage:
                                                Join a room (provider enables merge arbitration)
   quorum agent <room> [--as <handle>] [--provider <id>] [--model <id>] [--relay <url>]
                                                Seat an AI participant in a room
-  quorum setup                                 Configure model providers + keys     (M5)
+  quorum setup                                 Configure model providers + keys (interactive)
   quorum providers                             List installable model providers
   quorum --help                                Show this help
 
@@ -101,7 +102,7 @@ function agent(args: string[]): void {
   }
   const missing = missingRequired(provider, loadCredentials(provider));
   if (missing.length) {
-    console.error(`Warning: ${provider.id} is missing ${missing.join(", ")} — set them as env vars or the seat can't reply.`);
+    console.error(`Warning: ${provider.id} is missing ${missing.join(", ")} — run \`quorum setup\` or set them as env vars, or the seat can't reply.`);
   }
 
   spawnAgent({
@@ -132,8 +133,7 @@ async function main(): Promise<void> {
       agent(rest);
       break;
     case "setup":
-      console.error("`quorum setup` arrives in M5 — for now, providers read keys from the environment.");
-      process.exit(1);
+      await runSetup();
       break;
     case "--help":
     case "-h":

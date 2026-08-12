@@ -9,12 +9,13 @@ Model-agnostic by design. Claude, OpenAI, Meta/Llama, Kimi, and local /
 open-source models all plug in behind one adapter interface. Install once, wire
 up whichever providers you want.
 
-> Status: **M0–M2 landed** — the CRDT/DAG substrate is ported and tested, the
-> chat backbone works (run a relay, join from multiple terminals, share one
-> converged stream), and an **AI participant** can hold a seat: it joins like
-> any client, answers when @mentioned, and replies through a model provider.
-> The model router (M3) that lets it delegate across models is next. The
-> architecture and milestone plan live in the sibling repo —
+> Status: **M0–M3 landed** — the CRDT/DAG substrate is ported and tested, the
+> chat backbone works, an **AI participant** holds a seat and replies when
+> @mentioned, and the **router is multi-model with delegation**: all five
+> providers have a real `generate()`, `--provider` genuinely switches vendors,
+> and a seat can spin up another seat on a different model to own a subtask.
+> Left: packaging + first-run credential setup (M5) and DAG threads in chat
+> (M4). Plan and architecture live in the sibling repo —
 > [`multiplayer-ai/ROADMAP.md`](https://github.com/schady4/multiplayer-ai/blob/main/ROADMAP.md)
 > ([tracking epic](https://github.com/schady4/multiplayer-ai/issues/8)).
 
@@ -74,10 +75,22 @@ it reads the shared stream and replies into it. A late joiner catches up from
 the relay's op log. (During development, swap `node dist/cli.js` for
 `npm run dev --`.)
 
-The AI seat is model-agnostic: `--provider openai|meta|kimi|local` selects the
-vendor (once its adapter's `generate()` is implemented — Anthropic is wired
-first), and `--model` picks the model. Credentials come from the environment
-for now; `quorum setup` (M5) will prompt for them.
+The AI seat is model-agnostic: `--provider anthropic|openai|meta|kimi|local`
+selects the vendor and `--model` picks the model. All five have a real
+`generate()` — OpenAI, Meta/Llama, Kimi, and local servers share one
+OpenAI-compatible HTTP path, so any OpenAI-compatible endpoint works too.
+Credentials come from the environment for now; `quorum setup` (M5) will prompt.
+
+**Delegation.** A seat can spin up another seat on a different model to own a
+subtask. In the room:
+
+```
+@claude delegate scribe using openai/gpt-5 to summarize the thread so far
+```
+
+`claude` brings up a new seat named `scribe` on GPT-5; it joins the room as its
+own participant, does the task, and shares the result back to the group — the
+same way any seat does. Delegation nests: a spawned seat can delegate too.
 
 ## Adding a model provider
 

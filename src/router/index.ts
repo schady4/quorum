@@ -64,12 +64,7 @@ export async function dispatch(
   return provider.generate({ ...req, model: decision.model }, creds);
 }
 
-/**
- * Delegation primitive (M3). An agent asks the router to spin up a new instance
- * on a chosen model to own a subtask; that instance joins the room as its own
- * participant and shares back to the group. Stubbed until the AI participant
- * (M2) and room protocol (M1) exist to attach it to.
- */
-export async function delegate(_hint: RouteHint, _task: string): Promise<never> {
-  throw new Error("delegate(): implemented in M3 (needs M1 room + M2 participant)");
-}
+// Delegation — an agent spinning up a new instance on a chosen model to own a
+// subtask — lives in the agent layer (agent/spawn.ts), where it has the room
+// and participant machinery to attach a child seat to. The router's job is the
+// model choice above; the spawner uses it when building each child's responder.

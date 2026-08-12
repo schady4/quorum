@@ -21,12 +21,35 @@ export type TriggerPolicy = (latest: Entry, entries: Entry[], self: string) => b
 export const mentionTrigger: TriggerPolicy = (latest, _entries, self) =>
   latest.value.toLowerCase().includes(`@${self.toLowerCase()}`);
 
+/** A request to spin up another AI seat on a chosen model to own a subtask. */
+export interface DelegateSpec {
+  handle: string;
+  providerId?: string;
+  model?: string;
+  task: string;
+}
+
+// "@self delegate <handle> [using <provider>[/<model>]] to <task>"
+const DELEGATE_RE =
+  /delegate\s+(\S+?)(?:\s+using\s+([a-z0-9-]+)(?:\/([\w.:-]+))?)?\s+to\s+([\s\S]+)/i;
+
+/** Parse a delegation directive addressed to `self`, or null if it isn't one. */
+export function parseDelegate(text: string, self: string): DelegateSpec | null {
+  if (!text.toLowerCase().includes(`@${self.toLowerCase()}`)) return null;
+  const m = DELEGATE_RE.exec(text);
+  if (!m) return null;
+  return { handle: m[1].replace(/^@/, ""), providerId: m[2], model: m[3], task: m[4].trim() };
+}
+
 export interface AgentSeatOptions {
   relayUrl: string;
   room: string;
   handle: string;
   respond: Responder;
   shouldRespond?: TriggerPolicy;
+  /** Handle a delegation directive by spinning up another seat. When set, a
+   *  "@self delegate ..." message delegates instead of being answered. */
+  onDelegate?: (spec: DelegateSpec) => void;
   onReply?: (text: string) => void;
   onError?: (err: Error) => void;
 }
@@ -75,6 +98,21 @@ export class AgentSeat {
     if (!target) return;
 
     this.handled.add(target.id);
+
+    // A delegation directive takes precedence over answering it directly.
+    if (this.opts.onDelegate) {
+      const spec = parseDelegate(target.value, this.opts.handle);
+      if (spec) {
+        try {
+          this.client.send(`spinning up @${spec.handle} (${spec.providerId ?? "default"}${spec.model ? "/" + spec.model : ""}) to: ${spec.task}`);
+          this.opts.onDelegate(spec);
+        } catch (err) {
+          this.opts.onError?.(err instanceof Error ? err : new Error(String(err)));
+        }
+        return;
+      }
+    }
+
     this.busy = true;
     try {
       const reply = await this.opts.respond(entries, this.opts.handle);

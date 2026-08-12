@@ -10,8 +10,7 @@
 import { providers, getProvider } from "./providers/index.js";
 import { startRelay } from "./relay/server.js";
 import { runTui } from "./tui/app.js";
-import { AgentSeat } from "./agent/seat.js";
-import { createModelResponder } from "./agent/responder.js";
+import { spawnAgent } from "./agent/spawn.js";
 import { loadCredentials, missingRequired } from "./config/credentials.js";
 
 const [, , cmd, ...rest] = process.argv;
@@ -101,17 +100,17 @@ function agent(args: string[]): void {
     console.error(`Warning: ${provider.id} is missing ${missing.join(", ")} — set them as env vars or the seat can't reply.`);
   }
 
-  const respond = createModelResponder({ providerId, model });
-  const seat = new AgentSeat({
+  spawnAgent({
     relayUrl,
     room,
     handle,
-    respond,
-    onReply: (t) => console.error(`${handle} ▸ ${t}`),
-    onError: (e) => console.error(`[${handle}] ${e.message}`),
+    providerId,
+    model,
+    onReply: (h, t) => console.error(`${h} ▸ ${t}`),
+    onError: (h, e) => console.error(`[${h}] ${e.message}`),
   });
-  seat.start();
   console.error(`AI seat "${handle}" joined ${room} via ${providerId}${model ? "/" + model : ""}. Mention @${handle} to talk to it.`);
+  console.error(`Delegate: "@${handle} delegate <name> using <provider>/<model> to <task>" spins up another seat.`);
 }
 
 async function main(): Promise<void> {

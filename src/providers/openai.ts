@@ -1,6 +1,8 @@
-import type { ProviderAdapter } from "./types.js";
+import type { GenerateRequest, GenerateResult, ProviderAdapter } from "./types.js";
+import { openaiCompatibleGenerate } from "./openai-compatible.js";
 
-// OpenAI. Adapter stub — implemented in M3.
+// OpenAI. The canonical OpenAI-compatible endpoint; OPENAI_BASE_URL overrides it
+// for proxies or Azure-style hosts.
 export const openai: ProviderAdapter = {
   id: "openai",
   label: "OpenAI",
@@ -12,7 +14,7 @@ export const openai: ProviderAdapter = {
     { id: "gpt-5", label: "GPT-5", strengths: ["general", "code"] },
     { id: "gpt-5-mini", label: "GPT-5 mini", strengths: ["speed", "cheap"] },
   ],
-  async generate() {
-    throw new Error("openai.generate(): implemented in M3");
+  generate(req: GenerateRequest, creds: Record<string, string>): Promise<GenerateResult> {
+    return openaiCompatibleGenerate(creds.OPENAI_BASE_URL || "https://api.openai.com/v1", creds.OPENAI_API_KEY, req);
   },
 };

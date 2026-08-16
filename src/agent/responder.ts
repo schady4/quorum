@@ -3,7 +3,7 @@
 // adapter (how to call it). Swapping the provider or model changes nothing
 // here — that is the whole point of the router + adapter seam.
 
-import { route } from "../router/index.js";
+import { route, classifyEffort } from "../router/index.js";
 import { getProvider } from "../providers/index.js";
 import { loadCredentials, missingRequired } from "../config/credentials.js";
 import type { Entry } from "../core/crdt.js";
@@ -18,6 +18,12 @@ export interface ResponderOptions {
   /** Override the system prompt. */
   system?: string;
   maxTokens?: number;
+  /** Intent for the router. Defaults to "chat"; a delegated worker with a
+   *  narrower job can pass e.g. "summarize" or "code". */
+  kind?: string;
+  /** Fix the effort tier instead of inferring it from the message. Omit to let
+   *  the responder scale effort to the triggering message's apparent difficulty. */
+  effort?: "low" | "high";
 }
 
 function defaultSystem(self: string): string {
@@ -34,7 +40,20 @@ function defaultSystem(self: string): string {
  *  multi-turn/alternation rules. */
 export function createModelResponder(opts: ResponderOptions = {}): Responder {
   return async (entries, self) => {
-    const decision = await route({ preferProvider: opts.providerId, preferModel: opts.model });
+    // Scale model effort to the message we're actually answering: the newest
+    // entry that isn't ours. Small talk stays on a fast model; a design or code
+    // question earns a stronger one. An explicit opts.effort overrides.
+    const trigger = [...entries].reverse().find((e) => e.author !== self);
+    const effort = opts.effort ?? (trigger ? classifyEffort(trigger.value) : "low");
+    // A hard message shifts intent, not just tier: "chat" small talk stays on a
+    // fast generalist, while a design/code question routes to a reasoning model.
+    const kind = opts.kind ?? (effort === "high" ? "reasoning" : "chat");
+    const decision = await route({
+      preferProvider: opts.providerId,
+      preferModel: opts.model,
+      kind,
+      effort,
+    });
     const provider = getProvider(decision.provider);
     if (!provider) throw new Error(`Unknown provider: ${decision.provider}`);
 

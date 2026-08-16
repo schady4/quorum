@@ -16,7 +16,9 @@ export interface MergeResolverOptions {
 
 export function createMergeResolver(opts: MergeResolverOptions = {}): MergeResolver {
   return async (prep) => {
-    const decision = await route({ preferProvider: opts.providerId, preferModel: opts.model });
+    // Arbitration is a reasoning-heavy, low-frequency call — route it to the
+    // strongest model the chosen provider offers, not the room's chat default.
+    const decision = await route({ preferProvider: opts.providerId, preferModel: opts.model, kind: "arbitrate-merge" });
     const provider = getProvider(decision.provider);
     if (!provider) throw new Error(`Unknown provider: ${decision.provider}`);
     const creds = loadCredentials(provider);

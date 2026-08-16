@@ -47,9 +47,10 @@ Usage:
   quorum providers                             List installable model providers
   quorum --help                                Show this help
 
-Try it locally: run \`quorum host\`, then \`quorum join lobby --as you\` in one
-terminal and \`quorum agent lobby --as claude\` in another. Mention @claude to
-talk to it (needs the provider's API key in the environment).
+Try it locally: run \`quorum host --open\`, then \`quorum join lobby --as you\` in
+one terminal and \`quorum agent lobby --as claude\` in another. Mention @claude to
+talk to it (needs the provider's API key in the environment). Drop --open and
+host prints a room key + invite to share with friends (see \`quorum host\`).
 `);
 }
 

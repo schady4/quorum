@@ -11,9 +11,12 @@ up whichever providers you want.
 
 > Status: **feature-complete (M0–M5).** Substrate, chat backbone, AI
 > participants, multi-model router with delegation, DAG threads in live chat,
-> and now packaging: `quorum setup` prompts for the credentials of whichever
+> and packaging: `quorum setup` prompts for the credentials of whichever
 > providers you enable and stores them locally, and the package publishes to
-> npm so friends install it in one line. 96 tests across 15 suites. Plan and
+> npm so friends install it in one line. Rooms are **secure by default** — one
+> shared key both gates joins and end-to-end encrypts the traffic, so the relay
+> is a zero-knowledge mailbox — and clients **auto-reconnect** through drops.
+> 96 tests across 15 suites. Plan and
 > architecture live in the sibling repo —
 > [`multiplayer-ai/ROADMAP.md`](https://github.com/schady4/multiplayer-ai/blob/main/ROADMAP.md)
 > ([tracking epic](https://github.com/schady4/multiplayer-ai/issues/8)).
@@ -62,7 +65,7 @@ stored value.
 
 ```
 quorum host [--port <n>] [--key <secret>] [--open]   Start a relay/room server   ✓
-quorum join <room> [--as <handle>] [--relay <url>] [--key <secret>]   Join       ✓
+quorum join <room> [--as <h>] [--relay <url>] [--key <s>] [--provider <id>]  Join ✓
 quorum agent <room> [--as <h>] [--provider <id>] [--model <id>] [--key <s>]  AI   ✓
 quorum setup                                         Configure providers + keys  ✓
 quorum providers                                     List installable providers  ✓
@@ -79,20 +82,45 @@ mailbox. Structural metadata (who's present, message ordering, branch names and
 decision keys) stays in the clear so convergence still works. Pass your own key
 with `--key`, or run a keyless, unencrypted local relay with `--open`.
 
-Try it locally — a relay, a human, and an AI seat sharing one converged room:
+Try it on one machine — a relay, a human, and an AI seat sharing one converged
+room, each in its own terminal:
 
 ```bash
-npm run build
-node dist/cli.js host --open                    # terminal 1 — the relay (keyless, local)
-node dist/cli.js join lobby --as ada            # terminal 2 — you
+quorum host --open                    # terminal 1 — the relay (keyless, for local use)
+quorum join lobby --as ada            # terminal 2 — you
 ANTHROPIC_API_KEY=sk-... \
-  node dist/cli.js agent lobby --as claude      # terminal 3 — an AI seat
+  quorum agent lobby --as claude      # terminal 3 — an AI seat
 ```
 
 Type in your seat; both windows converge. Say `@claude ...` to talk to the AI —
 it reads the shared stream and replies into it. A late joiner catches up from
-the relay's op log. (During development, swap `node dist/cli.js` for
-`npm run dev --`.)
+the relay's op log. (Working from a clone instead of an install? `npm run build`
+first, then run `node dist/cli.js …` — or `npm run dev -- …` straight from
+source.)
+
+## Sharing with friends
+
+Drop `--open` and `quorum host` is secure by default: it prints a room key and a
+ready-to-send invite line. Hand the whole line to each friend — that's the setup.
+
+**Same network (same Wi-Fi / LAN).** Friends run the LAN invite `host` printed:
+
+```bash
+quorum join <room> --relay ws://<your-lan-ip>:8787 --key <key>
+```
+
+**Different networks.** A private IP isn't reachable from outside, and port 8787
+is often firewalled — so expose the relay through a tunnel, which also gives you
+a public `wss://` URL over 443 that restrictive networks allow. `host` prints the
+exact commands; for example:
+
+```bash
+ngrok http 8787       # then share: quorum join <room> --relay wss://<id>.ngrok.app --key <key>
+```
+
+Either way the room is end-to-end encrypted with that key, so neither the tunnel
+nor the relay ever sees your messages — only people holding the key do. Drop the
+Wi-Fi and clients reconnect on their own.
 
 The AI seat is model-agnostic: `--provider anthropic|openai|meta|kimi|local`
 selects the vendor and `--model` picks the model. All five have a real

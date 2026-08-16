@@ -7,8 +7,11 @@
 //   quorum providers                            list installable providers
 //   quorum --help                               usage
 
+import { networkInterfaces } from "node:os";
+import { randomBytes } from "node:crypto";
 import { providers, getProvider } from "./providers/index.js";
 import { startRelay } from "./relay/server.js";
+import { deriveAuthToken } from "./net/crypto.js";
 import { runTui } from "./tui/app.js";
 import { spawnAgent } from "./agent/spawn.js";
 import { createMergeResolver } from "./agent/merge.js";
@@ -33,10 +36,12 @@ function usage(): void {
   console.log(`quorum — multiplayer AI in your terminal
 
 Usage:
-  quorum host [--port <n>]                     Start a relay/room server (default 8787)
-  quorum join <room> [--as <handle>] [--relay <url>] [--provider <id>] [--model <id>]
+  quorum host [--port <n>] [--key <secret>] [--open]
+                                               Start a relay/room server (default 8787).
+                                               Generates a room key unless --open.
+  quorum join <room> [--as <handle>] [--relay <url>] [--key <secret>] [--provider <id>] [--model <id>]
                                                Join a room (provider enables merge arbitration)
-  quorum agent <room> [--as <handle>] [--provider <id>] [--model <id>] [--relay <url>]
+  quorum agent <room> [--as <handle>] [--key <secret>] [--provider <id>] [--model <id>] [--relay <url>]
                                                Seat an AI participant in a room
   quorum setup                                 Configure model providers + keys (interactive)
   quorum providers                             List installable model providers
@@ -61,11 +66,51 @@ async function listProviders(): Promise<void> {
   console.log("Add a model vendor by dropping an adapter in src/providers/ — see providers/types.ts.");
 }
 
+/** This machine's non-internal IPv4 addresses — the ones a friend on the same
+ *  network would dial. Empty on an odd network setup; we fall back to a
+ *  placeholder then. */
+function lanAddresses(): string[] {
+  const out: string[] = [];
+  for (const ifaces of Object.values(networkInterfaces())) {
+    for (const ni of ifaces ?? []) {
+      // Node reports family as "IPv4" (newer) or 4 (older).
+      const v4 = ni.family === "IPv4" || (ni.family as unknown) === 4;
+      if (v4 && !ni.internal) out.push(ni.address);
+    }
+  }
+  return out;
+}
+
 async function host(args: string[]): Promise<void> {
   const { flags } = parse(args);
-  const port = Number(flags.port ?? 8787);
-  await startRelay({ port, verbose: true });
-  console.error(`Share this room by having friends run:  quorum join <room> --relay ws://<your-host>:${port}`);
+  const requested = Number(flags.port ?? 8787);
+  // Secure by default: generate a room key unless the host passes one, or opts
+  // out with --open for a keyless local relay.
+  const open = "open" in flags;
+  const key = open ? undefined : (flags.key || randomBytes(8).toString("base64url"));
+
+  // The relay only ever holds the derived auth token, never the room key — so it
+  // can gate joins but can't decrypt the end-to-end-encrypted traffic.
+  const { port } = await startRelay({ port: requested, authToken: deriveAuthToken(key), verbose: true });
+  const ips = lanAddresses();
+  const keyFlag = key ? ` --key ${key}` : "";
+
+  console.error("");
+  if (key) console.error(`Quorum relay is up · 🔒 room key: ${key} · end-to-end encrypted`);
+  else console.error("Quorum relay is up · ⚠ open (no key — anyone who reaches it can join)");
+  console.error("\nShare this invite with friends:\n");
+  console.error("  Same network (same Wi-Fi / LAN):");
+  if (ips.length) {
+    for (const ip of ips) console.error(`    quorum join <room> --relay ws://${ip}:${port}${keyFlag}`);
+  } else {
+    console.error(`    quorum join <room> --relay ws://<this-machine-ip>:${port}${keyFlag}`);
+  }
+  console.error("\n  Different networks (friends elsewhere): a private IP isn't reachable");
+  console.error("  from outside, and port " + port + " is often firewalled. Expose it with a");
+  console.error("  tunnel — you get a public wss:// URL over 443 that restrictive networks allow:");
+  console.error(`    ngrok http ${port}                          -> quorum join <room> --relay wss://<id>.ngrok.app${keyFlag}`);
+  console.error(`    cloudflared tunnel --url http://localhost:${port}  -> --relay wss://<id>.trycloudflare.com${keyFlag}`);
+  console.error("");
   // startRelay keeps the process alive via the open server.
 }
 
@@ -80,7 +125,7 @@ function join(args: string[]): void {
   const relayUrl = flags.relay ?? "ws://localhost:8787";
   // With a provider, this seat can arbitrate semantic merge collisions.
   const resolver = flags.provider ? createMergeResolver({ providerId: flags.provider, model: flags.model }) : undefined;
-  runTui({ relayUrl, room, handle, resolver });
+  runTui({ relayUrl, room, handle, key: flags.key, resolver });
 }
 
 function agent(args: string[]): void {
@@ -94,6 +139,7 @@ function agent(args: string[]): void {
   const providerId = flags.provider ?? "anthropic";
   const model = flags.model;
   const relayUrl = flags.relay ?? "ws://localhost:8787";
+  const key = flags.key;
 
   const provider = getProvider(providerId);
   if (!provider) {
@@ -109,6 +155,7 @@ function agent(args: string[]): void {
     relayUrl,
     room,
     handle,
+    key,
     providerId,
     model,
     onReply: (h, t) => console.error(`${h} ▸ ${t}`),

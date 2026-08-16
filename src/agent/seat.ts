@@ -45,6 +45,8 @@ export interface AgentSeatOptions {
   relayUrl: string;
   room: string;
   handle: string;
+  /** Shared room secret, if the relay requires one. */
+  key?: string;
   respond: Responder;
   shouldRespond?: TriggerPolicy;
   /** Handle a delegation directive by spinning up another seat. When set, a
@@ -61,10 +63,14 @@ export class AgentSeat {
   private trigger: TriggerPolicy;
 
   constructor(private readonly opts: AgentSeatOptions) {
-    this.client = new RoomClient(opts.relayUrl, opts.room, opts.handle);
+    this.client = new RoomClient(opts.relayUrl, opts.room, opts.handle, opts.key);
     this.trigger = opts.shouldRespond ?? mentionTrigger;
     this.client.on("update", (entries: Entry[]) => {
       void this.onUpdate(entries);
+    });
+    // A refused join (wrong room key) is terminal — surface it to the caller.
+    this.client.on("denied", (reason: string) => {
+      this.opts.onError?.(new Error(`join denied: ${reason}`));
     });
   }
 
@@ -78,6 +84,13 @@ export class AgentSeat {
 
   close(): void {
     this.client.close();
+  }
+
+  /** Fold the durable progress log into our in-memory handled set. On a fresh
+   *  reconnect this is what stops the seat from re-answering messages a previous
+   *  incarnation already handled — it resumes instead of repeating. */
+  private syncCheckpoints(): void {
+    for (const id of this.client.handledBy(this.opts.handle)) this.handled.add(id);
   }
 
   /** Newest message worth answering: skip our own, stop at anything already
@@ -94,6 +107,7 @@ export class AgentSeat {
 
   private async onUpdate(entries: Entry[]): Promise<void> {
     if (this.busy) return; // finish the current reply first; re-drain after
+    this.syncCheckpoints(); // resume from durable progress before choosing a target
     const target = this.pickTarget(entries);
     if (!target) return;
 
@@ -106,6 +120,7 @@ export class AgentSeat {
         try {
           this.client.send(`spinning up @${spec.handle} (${spec.providerId ?? "default"}${spec.model ? "/" + spec.model : ""}) to: ${spec.task}`);
           this.opts.onDelegate(spec);
+          this.client.checkpoint(target.id); // durably: this delegation is done
         } catch (err) {
           this.opts.onError?.(err instanceof Error ? err : new Error(String(err)));
         }
@@ -118,6 +133,7 @@ export class AgentSeat {
       const reply = await this.opts.respond(entries, this.opts.handle);
       if (reply) {
         this.client.send(reply);
+        this.client.checkpoint(target.id); // durably: this message is answered
         this.opts.onReply?.(reply);
       }
     } catch (err) {

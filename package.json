@@ -1,6 +1,6 @@
 {
   "name": "@schady4/quorum",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Multiplayer AI in your terminal — friends and multiple AI models share one live chat session on a CRDT + DAG substrate. Model-agnostic, MCP-native.",
   "author": "Jarett Schadlich",
   "license": "CC-BY-NC-4.0",
@@ -38,7 +38,14 @@
     "test:ledger": "tsx test/ledger.test.ts",
     "test:session": "tsx test/session.test.ts",
     "test:config": "tsx test/config.test.ts",
-    "test:all": "npm run test && npm run test:net && npm run test:agent && npm run test:delegate && npm run test:ledger && npm run test:session && npm run test:config",
+    "test:router": "tsx test/router.test.ts",
+    "test:responder": "tsx test/responder.test.ts",
+    "test:durable": "tsx test/durable.test.ts",
+    "test:reconnect": "tsx test/reconnect.test.ts",
+    "test:auth": "tsx test/auth.test.ts",
+    "test:keepalive": "tsx test/keepalive.test.ts",
+    "test:e2e": "tsx test/e2e.test.ts",
+    "test:all": "npm run test && npm run test:net && npm run test:agent && npm run test:delegate && npm run test:ledger && npm run test:session && npm run test:config && npm run test:router && npm run test:responder && npm run test:durable && npm run test:reconnect && npm run test:auth && npm run test:keepalive && npm run test:e2e",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [

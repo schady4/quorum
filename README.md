@@ -13,7 +13,7 @@ up whichever providers you want.
 > participants, multi-model router with delegation, DAG threads in live chat,
 > and now packaging: `quorum setup` prompts for the credentials of whichever
 > providers you enable and stores them locally, and the package publishes to
-> npm so friends install it in one line. 47 tests across 7 suites. Plan and
+> npm so friends install it in one line. 93 tests across 14 suites. Plan and
 > architecture live in the sibling repo —
 > [`multiplayer-ai/ROADMAP.md`](https://github.com/schady4/multiplayer-ai/blob/main/ROADMAP.md)
 > ([tracking epic](https://github.com/schady4/multiplayer-ai/issues/8)).
@@ -61,22 +61,32 @@ stored value.
 ## Commands
 
 ```
-quorum host [--port <n>]                             Start a relay/room server   ✓
-quorum join <room> [--as <handle>] [--relay <url>]   Join a room                 ✓
-quorum agent <room> [--as <h>] [--provider <id>] [--model <id>]   Seat an AI     ✓
+quorum host [--port <n>] [--key <secret>] [--open]   Start a relay/room server   ✓
+quorum join <room> [--as <handle>] [--relay <url>] [--key <secret>]   Join       ✓
+quorum agent <room> [--as <h>] [--provider <id>] [--model <id>] [--key <s>]  AI   ✓
 quorum setup                                         Configure providers + keys  ✓
 quorum providers                                     List installable providers  ✓
 quorum --help                                        Usage
 ```
 
+**Room access & encryption.** `quorum host` is secure by default: it generates
+a shared room key and prints a ready invite line (`… --relay … --key <secret>`).
+From that one key each client derives, independently, a relay **auth token** and
+an **encryption key**. The relay is configured with only the token — a one-way
+derivation — so it gates joins but can't read the traffic: chat and decision
+values are sealed with AES-256-GCM end-to-end, and the relay is a zero-knowledge
+mailbox. Structural metadata (who's present, message ordering, branch names and
+decision keys) stays in the clear so convergence still works. Pass your own key
+with `--key`, or run a keyless, unencrypted local relay with `--open`.
+
 Try it locally — a relay, a human, and an AI seat sharing one converged room:
 
 ```bash
 npm run build
-node dist/cli.js host                          # terminal 1 — the relay
-node dist/cli.js join lobby --as ada           # terminal 2 — you
+node dist/cli.js host --open                    # terminal 1 — the relay (keyless, local)
+node dist/cli.js join lobby --as ada            # terminal 2 — you
 ANTHROPIC_API_KEY=sk-... \
-  node dist/cli.js agent lobby --as claude     # terminal 3 — an AI seat
+  node dist/cli.js agent lobby --as claude      # terminal 3 — an AI seat
 ```
 
 Type in your seat; both windows converge. Say `@claude ...` to talk to the AI —
@@ -88,7 +98,8 @@ The AI seat is model-agnostic: `--provider anthropic|openai|meta|kimi|local`
 selects the vendor and `--model` picks the model. All five have a real
 `generate()` — OpenAI, Meta/Llama, Kimi, and local servers share one
 OpenAI-compatible HTTP path, so any OpenAI-compatible endpoint works too.
-Credentials come from the environment for now; `quorum setup` (M5) will prompt.
+Credentials come from `quorum setup` (stored locally) or a `KEY=… quorum agent …`
+environment override — see [Install](#install).
 
 **Delegation.** A seat can spin up another seat on a different model to own a
 subtask. In the room:

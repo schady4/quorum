@@ -5,7 +5,7 @@
 // participant and shares its work back to the group, exactly like any seat.
 
 import { AgentSeat, type DelegateSpec } from "./seat.js";
-import { createModelResponder } from "./responder.js";
+import { createModelResponder, createDelegateResponder } from "./responder.js";
 
 export interface SpawnConfig {
   relayUrl: string;
@@ -17,6 +17,10 @@ export interface SpawnConfig {
   onError?: (handle: string, err: Error) => void;
   /** How long to let a spawned child join before handing it the task (ms). */
   handoffDelayMs?: number;
+  /** A worker seat is scoped to one delegated subtask: it answers from a bounded
+   *  slice of context and publishes a single result, instead of joining the chat
+   *  on the full transcript. Delegated children are workers; the root seat isn't. */
+  worker?: boolean;
 }
 
 /** Create, wire, and start an AI seat that can also delegate. Returns the seat
@@ -25,11 +29,18 @@ export interface SpawnConfig {
 export function spawnAgent(cfg: SpawnConfig): AgentSeat {
   const handoff = cfg.handoffDelayMs ?? 400;
 
+  // A conversational participant reads the whole room; a delegated worker
+  // answers one scoped subtask from bounded context. Same seat machinery either
+  // way — only the responder differs.
+  const respond = cfg.worker
+    ? createDelegateResponder({ providerId: cfg.providerId, model: cfg.model })
+    : createModelResponder({ providerId: cfg.providerId, model: cfg.model });
+
   const seat = new AgentSeat({
     relayUrl: cfg.relayUrl,
     room: cfg.room,
     handle: cfg.handle,
-    respond: createModelResponder({ providerId: cfg.providerId, model: cfg.model }),
+    respond,
     onReply: (t) => cfg.onReply?.(cfg.handle, t),
     onError: (e) => cfg.onError?.(cfg.handle, e),
     onDelegate: (spec: DelegateSpec) => {
@@ -43,6 +54,7 @@ export function spawnAgent(cfg: SpawnConfig): AgentSeat {
         onReply: cfg.onReply,
         onError: cfg.onError,
         handoffDelayMs: handoff,
+        worker: true, // scoped to the delegated subtask; nested delegation stays scoped too
       });
       // ...then hand it the task by addressing it in the room, once it's joined.
       setTimeout(() => seat.roomClient.send(`@${spec.handle} ${spec.task}`), handoff);

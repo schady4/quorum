@@ -23,6 +23,10 @@ export interface Hello {
   room: string;
   handle: string;
   key?: string;
+  /** Stable per-client id, unchanged across a client's reconnects. Lets the
+   *  relay tell a reconnect (same id reclaims its handle) from a collision (a
+   *  different client wanting a handle that's already live). */
+  clientId?: string;
 }
 
 /** server -> client: the join was refused (e.g. wrong or missing room key).

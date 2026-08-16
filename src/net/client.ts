@@ -70,7 +70,7 @@ export class RoomClient extends EventEmitter {
 
     ws.on("open", () => {
       this.attempt = 0; // a successful connection resets the backoff
-      ws.send(encode({ t: "hello", room: this.room, handle: this.handle, key: this.key }));
+      ws.send(encode({ t: "hello", room: this.room, handle: this.handle, key: this.key, clientId: this.clientId }));
       this.emit("open");
     });
 

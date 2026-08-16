@@ -8,7 +8,9 @@ import { EventEmitter } from "node:events";
 import { WebSocket } from "ws";
 import { createSurface, type CrdtSurface, type Entry, type InsertOp } from "../core/crdt.js";
 import { Ledger, type LedgerOp, type MergeResolver } from "../core/ledger.js";
-import { decode, encode } from "./protocol.js";
+import { decode, encode, type CheckpointOp } from "./protocol.js";
+
+const NO_IDS: ReadonlySet<string> = new Set();
 
 let _seq = 0;
 /** A process-unique site id, so op ids never collide across clients. */
@@ -19,6 +21,8 @@ function newClientId(): string {
 export interface RoomClientEvents {
   update: (entries: Entry[]) => void;
   presence: (participants: string[]) => void;
+  ledger: (ledger: Ledger) => void;
+  checkpoint: (op: CheckpointOp) => void;
   open: () => void;
   close: () => void;
   error: (err: Error) => void;
@@ -28,6 +32,8 @@ export class RoomClient extends EventEmitter {
   readonly clientId = newClientId();
   private surface: CrdtSurface = createSurface();
   readonly ledger = new Ledger();
+  /** Durable seat progress: seat handle -> the chat entry ids it has handled. */
+  private checkpoints = new Map<string, Set<string>>();
   private counter = 0;
   private ws: WebSocket | null = null;
   participants: string[] = [];
@@ -54,6 +60,9 @@ export class RoomClient extends EventEmitter {
       if (msg.t === "welcome") {
         for (const op of msg.ops) this.surface.apply(op);
         for (const op of msg.ledgerOps) this.ledger.apply(op);
+        // Seed progress before the first update fires, so a rejoining seat knows
+        // what it already handled before it decides what to answer.
+        for (const op of msg.checkpointOps ?? []) this.applyCheckpoint(op);
         this.participants = msg.participants;
         this.emit("presence", this.participants);
         this.emit("update", this.surface.entries());
@@ -64,6 +73,9 @@ export class RoomClient extends EventEmitter {
       } else if (msg.t === "ledger") {
         this.ledger.apply(msg.op);
         this.emit("ledger", this.ledger);
+      } else if (msg.t === "checkpoint") {
+        this.applyCheckpoint(msg.op);
+        this.emit("checkpoint", msg.op);
       } else if (msg.t === "presence") {
         this.participants = msg.participants;
         this.emit("presence", this.participants);
@@ -90,6 +102,29 @@ export class RoomClient extends EventEmitter {
 
   entries(): Entry[] {
     return this.surface.entries();
+  }
+
+  private applyCheckpoint(op: CheckpointOp): void {
+    let s = this.checkpoints.get(op.seat);
+    if (!s) {
+      s = new Set();
+      this.checkpoints.set(op.seat, s);
+    }
+    s.add(op.handled);
+  }
+
+  /** The chat entry ids a given seat has durably recorded as handled — replayed
+   *  from the relay on reconnect, so a seat can seed its progress on rejoin. */
+  handledBy(seat: string): ReadonlySet<string> {
+    return this.checkpoints.get(seat) ?? NO_IDS;
+  }
+
+  /** Record that this seat finished handling a chat entry. Applied locally and
+   *  broadcast, so it survives a reconnect and every replica can see it. */
+  checkpoint(handled: string): void {
+    const op: CheckpointOp = { id: `${this.clientId}:${++this.counter}`, seat: this.handle, handled };
+    this.applyCheckpoint(op);
+    this.ws?.send(encode({ t: "checkpoint", op }));
   }
 
   private sendLedger(op: LedgerOp): void {

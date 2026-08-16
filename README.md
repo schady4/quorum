@@ -13,7 +13,7 @@ up whichever providers you want.
 > participants, multi-model router with delegation, DAG threads in live chat,
 > and now packaging: `quorum setup` prompts for the credentials of whichever
 > providers you enable and stores them locally, and the package publishes to
-> npm so friends install it in one line. 47 tests across 7 suites. Plan and
+> npm so friends install it in one line. 69 tests across 10 suites. Plan and
 > architecture live in the sibling repo —
 > [`multiplayer-ai/ROADMAP.md`](https://github.com/schady4/multiplayer-ai/blob/main/ROADMAP.md)
 > ([tracking epic](https://github.com/schady4/multiplayer-ai/issues/8)).

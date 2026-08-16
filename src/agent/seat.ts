@@ -80,6 +80,13 @@ export class AgentSeat {
     this.client.close();
   }
 
+  /** Fold the durable progress log into our in-memory handled set. On a fresh
+   *  reconnect this is what stops the seat from re-answering messages a previous
+   *  incarnation already handled — it resumes instead of repeating. */
+  private syncCheckpoints(): void {
+    for (const id of this.client.handledBy(this.opts.handle)) this.handled.add(id);
+  }
+
   /** Newest message worth answering: skip our own, stop at anything already
    *  handled (older is older), return the first that trips the trigger. */
   private pickTarget(entries: Entry[]): Entry | null {
@@ -94,6 +101,7 @@ export class AgentSeat {
 
   private async onUpdate(entries: Entry[]): Promise<void> {
     if (this.busy) return; // finish the current reply first; re-drain after
+    this.syncCheckpoints(); // resume from durable progress before choosing a target
     const target = this.pickTarget(entries);
     if (!target) return;
 
@@ -106,6 +114,7 @@ export class AgentSeat {
         try {
           this.client.send(`spinning up @${spec.handle} (${spec.providerId ?? "default"}${spec.model ? "/" + spec.model : ""}) to: ${spec.task}`);
           this.opts.onDelegate(spec);
+          this.client.checkpoint(target.id); // durably: this delegation is done
         } catch (err) {
           this.opts.onError?.(err instanceof Error ? err : new Error(String(err)));
         }
@@ -118,6 +127,7 @@ export class AgentSeat {
       const reply = await this.opts.respond(entries, this.opts.handle);
       if (reply) {
         this.client.send(reply);
+        this.client.checkpoint(target.id); // durably: this message is answered
         this.opts.onReply?.(reply);
       }
     } catch (err) {

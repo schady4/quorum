@@ -5,6 +5,16 @@
 import type { Op } from "../core/crdt.js";
 import type { LedgerOp } from "../core/ledger.js";
 
+/** A durable progress marker: seat `seat` has finished handling chat entry
+ *  `handled`. Stored and replayed by the relay like any op, so a seat that
+ *  reconnects reconstructs what it already did and resumes instead of
+ *  re-answering. Its own concern, kept out of the belief-state ledger. */
+export interface CheckpointOp {
+  id: string;
+  seat: string;
+  handled: string;
+}
+
 /** client -> server, first frame after connecting. */
 export interface Hello {
   t: "hello";
@@ -12,13 +22,14 @@ export interface Hello {
   handle: string;
 }
 
-/** server -> client, the catch-up frame: both op logs + who's here. */
+/** server -> client, the catch-up frame: all op logs + who's here. */
 export interface Welcome {
   t: "welcome";
   room: string;
   participants: string[];
   ops: Op[];
   ledgerOps: LedgerOp[];
+  checkpointOps: CheckpointOp[];
 }
 
 /** either direction: one CRDT (chat surface) op to integrate. */
@@ -33,14 +44,20 @@ export interface LedgerFrame {
   op: LedgerOp;
 }
 
+/** either direction: one seat progress checkpoint. */
+export interface CheckpointFrame {
+  t: "checkpoint";
+  op: CheckpointOp;
+}
+
 /** server -> clients: the room roster changed. */
 export interface Presence {
   t: "presence";
   participants: string[];
 }
 
-export type ClientMsg = Hello | OpFrame | LedgerFrame;
-export type ServerMsg = Welcome | OpFrame | LedgerFrame | Presence;
+export type ClientMsg = Hello | OpFrame | LedgerFrame | CheckpointFrame;
+export type ServerMsg = Welcome | OpFrame | LedgerFrame | CheckpointFrame | Presence;
 
 export function encode(msg: ClientMsg | ServerMsg): string {
   return JSON.stringify(msg);

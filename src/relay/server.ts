@@ -7,7 +7,7 @@
 import { WebSocketServer, WebSocket, type AddressInfo } from "ws";
 import type { Op } from "../core/crdt.js";
 import type { LedgerOp } from "../core/ledger.js";
-import { decode, encode, type ServerMsg } from "../net/protocol.js";
+import { decode, encode, type CheckpointOp, type ServerMsg } from "../net/protocol.js";
 
 interface Room {
   /** Append-only chat-surface op log, deduped by op id. */
@@ -16,6 +16,10 @@ interface Room {
   /** Append-only ledger op log (fork/edit/merge), deduped by op id. */
   ledgerOps: LedgerOp[];
   ledgerSeen: Set<string>;
+  /** Append-only seat-progress log, so a reconnecting seat resumes rather than
+   *  re-answering. Deduped by op id. */
+  checkpointOps: CheckpointOp[];
+  checkpointSeen: Set<string>;
   /** Connected sockets and the handle each announced. */
   clients: Map<WebSocket, string>;
 }
@@ -38,7 +42,7 @@ export function startRelay(opts: RelayOptions): Promise<RelayHandle> {
   const room = (name: string): Room => {
     let r = rooms.get(name);
     if (!r) {
-      r = { ops: [], seen: new Set(), ledgerOps: [], ledgerSeen: new Set(), clients: new Map() };
+      r = { ops: [], seen: new Set(), ledgerOps: [], ledgerSeen: new Set(), checkpointOps: [], checkpointSeen: new Set(), clients: new Map() };
       rooms.set(name, r);
     }
     return r;
@@ -84,7 +88,7 @@ export function startRelay(opts: RelayOptions): Promise<RelayHandle> {
           r.clients.set(ws, msg.handle);
           joined = r;
           log(`+ ${msg.handle} joined ${msg.room} (${r.clients.size} here)`);
-          send(ws, { t: "welcome", room: msg.room, participants: roster(r), ops: r.ops, ledgerOps: r.ledgerOps });
+          send(ws, { t: "welcome", room: msg.room, participants: roster(r), ops: r.ops, ledgerOps: r.ledgerOps, checkpointOps: r.checkpointOps });
           broadcast(r, { t: "presence", participants: roster(r) });
           return;
         }
@@ -104,6 +108,15 @@ export function startRelay(opts: RelayOptions): Promise<RelayHandle> {
           joined.ledgerSeen.add(op.id);
           joined.ledgerOps.push(op);
           broadcast(joined, { t: "ledger", op }, ws);
+          return;
+        }
+
+        if (msg.t === "checkpoint" && joined) {
+          const { op } = msg;
+          if (joined.checkpointSeen.has(op.id)) return;
+          joined.checkpointSeen.add(op.id);
+          joined.checkpointOps.push(op);
+          broadcast(joined, { t: "checkpoint", op }, ws);
         }
       });
 

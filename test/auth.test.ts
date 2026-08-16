@@ -5,6 +5,7 @@
 
 import { startRelay } from "../src/relay/server.js";
 import { RoomClient } from "../src/net/client.js";
+import { deriveAuthToken } from "../src/net/crypto.js";
 import type { Entry } from "../src/core/crdt.js";
 
 let passed = 0;
@@ -34,7 +35,7 @@ async function waitUntil(cond: () => boolean, timeoutMs = 3000): Promise<boolean
 
 async function main(): Promise<void> {
   // --- Keyed relay: right key joins and converges; wrong/missing key refused. --
-  const keyed = await startRelay({ port: 0, key: "s3cret" });
+  const keyed = await startRelay({ port: 0, authToken: deriveAuthToken("s3cret") });
   const url = `ws://localhost:${keyed.port}`;
 
   const ada = new RoomClient(url, "lobby", "ada", "s3cret");

@@ -22,7 +22,10 @@ export interface Hello {
   t: "hello";
   room: string;
   handle: string;
-  key?: string;
+  /** Auth token derived from the room secret (never the secret itself). The
+   *  relay gates joins on it; a one-way derivation, so the relay can't recover
+   *  the secret or the encryption key. Omitted against an open relay. */
+  auth?: string;
   /** Stable per-client id, unchanged across a client's reconnects. Lets the
    *  relay tell a reconnect (same id reclaims its handle) from a collision (a
    *  different client wanting a handle that's already live). */

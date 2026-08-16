@@ -8,7 +8,9 @@ import { EventEmitter } from "node:events";
 import { WebSocket } from "ws";
 import { createSurface, type CrdtSurface, type Entry, type InsertOp } from "../core/crdt.js";
 import { Ledger, type LedgerOp, type MergeResolver } from "../core/ledger.js";
+import type { BeliefState } from "../core/dag.js";
 import { decode, encode, type CheckpointOp } from "./protocol.js";
+import { roomCrypto, type RoomCrypto } from "./crypto.js";
 
 const NO_IDS: ReadonlySet<string> = new Set();
 
@@ -38,6 +40,10 @@ export class RoomClient extends EventEmitter {
   readonly ledger = new Ledger();
   /** Durable seat progress: seat handle -> the chat entry ids it has handled. */
   private checkpoints = new Map<string, Set<string>>();
+  /** End-to-end crypto derived from the room secret; identity for an open room. */
+  private readonly crypto: RoomCrypto;
+  /** Decrypted-value cache, keyed by op id (op values are immutable). */
+  private readonly plain = new Map<string, string>();
   private counter = 0;
   private ws: WebSocket | null = null;
   participants: string[] = [];
@@ -53,10 +59,47 @@ export class RoomClient extends EventEmitter {
     readonly url: string,
     readonly room: string,
     readonly handle: string,
-    /** Shared room secret, sent in the hello. Omit against an open relay. */
+    /** Shared room secret. Derives the relay auth token and the E2E encryption
+     *  key; never sent to the relay itself. Omit against an open relay. */
     readonly key?: string,
   ) {
     super();
+    this.crypto = roomCrypto(key, room);
+  }
+
+  /** The surface, decrypted for readers. Everything above this boundary — the
+   *  TUI, AI seats, @mention detection — sees plaintext; only the wire, the
+   *  surface, and the relay hold ciphertext. Cached per op id. */
+  private viewEntries(): Entry[] {
+    return this.surface.entries().map((e) => {
+      let v = this.plain.get(e.id);
+      if (v === undefined) {
+        v = this.crypto.dec(e.value);
+        this.plain.set(e.id, v);
+      }
+      return { ...e, value: v };
+    });
+  }
+
+  /** Seal a ledger op's content for the wire (edit value, merge resolved). */
+  private encLedger(op: LedgerOp): LedgerOp {
+    if (op.type === "edit") return { ...op, value: this.crypto.enc(op.value) };
+    if (op.type === "merge") return { ...op, resolved: this.sealState(op.resolved, this.crypto.enc) };
+    return op;
+  }
+
+  /** Open a ledger op received from the wire before it reaches the Ledger, which
+   *  works on plaintext (its three-way merge compares values). */
+  private decLedger(op: LedgerOp): LedgerOp {
+    if (op.type === "edit") return { ...op, value: this.crypto.dec(op.value) };
+    if (op.type === "merge") return { ...op, resolved: this.sealState(op.resolved, this.crypto.dec) };
+    return op;
+  }
+
+  private sealState(state: BeliefState, fn: (s: string) => string): BeliefState {
+    const out: BeliefState = {};
+    for (const k of Object.keys(state)) out[k] = fn(state[k]);
+    return out;
   }
 
   connect(): void {
@@ -70,7 +113,7 @@ export class RoomClient extends EventEmitter {
 
     ws.on("open", () => {
       this.attempt = 0; // a successful connection resets the backoff
-      ws.send(encode({ t: "hello", room: this.room, handle: this.handle, key: this.key, clientId: this.clientId }));
+      ws.send(encode({ t: "hello", room: this.room, handle: this.handle, auth: this.crypto.authToken, clientId: this.clientId }));
       this.emit("open");
     });
 
@@ -78,19 +121,19 @@ export class RoomClient extends EventEmitter {
       const msg = decode(data.toString());
       if (msg.t === "welcome") {
         for (const op of msg.ops) this.surface.apply(op);
-        for (const op of msg.ledgerOps) this.ledger.apply(op);
+        for (const op of msg.ledgerOps) this.ledger.apply(this.decLedger(op));
         // Seed progress before the first update fires, so a rejoining seat knows
         // what it already handled before it decides what to answer.
         for (const op of msg.checkpointOps ?? []) this.applyCheckpoint(op);
         this.participants = msg.participants;
         this.emit("presence", this.participants);
-        this.emit("update", this.surface.entries());
+        this.emit("update", this.viewEntries());
         this.emit("ledger", this.ledger);
       } else if (msg.t === "op") {
         this.surface.apply(msg.op);
-        this.emit("update", this.surface.entries());
+        this.emit("update", this.viewEntries());
       } else if (msg.t === "ledger") {
-        this.ledger.apply(msg.op);
+        this.ledger.apply(this.decLedger(msg.op));
         this.emit("ledger", this.ledger);
       } else if (msg.t === "checkpoint") {
         this.applyCheckpoint(msg.op);
@@ -148,16 +191,16 @@ export class RoomClient extends EventEmitter {
       type: "insert",
       id: `${this.clientId}:${++this.counter}`,
       after: this.surface.tail(),
-      value: text,
+      value: this.crypto.enc(text), // ciphertext on the wire and in the surface
       author: this.handle,
     };
     this.surface.apply(op);
-    this.emit("update", this.surface.entries());
+    this.emit("update", this.viewEntries());
     if (this.live) this.ws!.send(encode({ t: "op", op }));
   }
 
   entries(): Entry[] {
-    return this.surface.entries();
+    return this.viewEntries();
   }
 
   private applyCheckpoint(op: CheckpointOp): void {
@@ -184,9 +227,9 @@ export class RoomClient extends EventEmitter {
   }
 
   private sendLedger(op: LedgerOp): void {
-    this.ledger.apply(op);
+    this.ledger.apply(op); // the local Ledger holds plaintext
     this.emit("ledger", this.ledger);
-    if (this.live) this.ws!.send(encode({ t: "ledger", op }));
+    if (this.live) this.ws!.send(encode({ t: "ledger", op: this.encLedger(op) })); // wire holds ciphertext
   }
 
   /** Fork the trunk decision-state into named branches. */

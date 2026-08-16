@@ -4,22 +4,11 @@
 // replica, not something the server computes. Run your own, or point at a
 // shared one.
 
-import { timingSafeEqual } from "node:crypto";
 import { WebSocketServer, WebSocket, type AddressInfo } from "ws";
 import type { Op } from "../core/crdt.js";
 import type { LedgerOp } from "../core/ledger.js";
 import { decode, encode, type CheckpointOp, type ServerMsg } from "../net/protocol.js";
-
-/** Constant-time key check. An empty configured key means the relay is open
- *  (no auth) — every join is allowed, preserving the keyless default. */
-function keyMatches(configured: string | undefined, provided: string | undefined): boolean {
-  if (!configured) return true;
-  if (typeof provided !== "string") return false;
-  const a = Buffer.from(configured);
-  const b = Buffer.from(provided);
-  // Length differs -> not equal; timingSafeEqual requires equal-length buffers.
-  return a.length === b.length && timingSafeEqual(a, b);
-}
+import { authMatches } from "../net/crypto.js";
 
 /** What the relay tracks per connected socket. */
 interface Member {
@@ -50,9 +39,10 @@ export interface RelayHandle {
 
 export interface RelayOptions {
   port: number;
-  /** Shared room secret. When set, a client must present the matching key in its
-   *  hello or the join is refused. Omit for an open relay (the default). */
-  key?: string;
+  /** The join gate's auth token (derived from the room secret by the host — the
+   *  relay never sees the secret itself). When set, a client must present the
+   *  matching token in its hello or the join is refused. Omit for an open relay. */
+  authToken?: string;
   /** Heartbeat interval (ms) for ping/pong liveness checks. A socket that misses
    *  a beat is terminated, so rosters stay accurate and handles free up promptly.
    *  Default 30s. */
@@ -135,7 +125,7 @@ export function startRelay(opts: RelayOptions): Promise<RelayHandle> {
         }
 
         if (msg.t === "hello") {
-          if (!keyMatches(opts.key, msg.key)) {
+          if (!authMatches(opts.authToken, msg.auth)) {
             log(`✗ ${msg.handle} denied on ${msg.room} (bad room key)`);
             send(ws, { t: "denied", reason: "wrong or missing room key" });
             ws.close();

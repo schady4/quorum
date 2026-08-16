@@ -11,6 +11,7 @@ import { networkInterfaces } from "node:os";
 import { randomBytes } from "node:crypto";
 import { providers, getProvider } from "./providers/index.js";
 import { startRelay } from "./relay/server.js";
+import { deriveAuthToken } from "./net/crypto.js";
 import { runTui } from "./tui/app.js";
 import { spawnAgent } from "./agent/spawn.js";
 import { createMergeResolver } from "./agent/merge.js";
@@ -88,13 +89,14 @@ async function host(args: string[]): Promise<void> {
   const open = "open" in flags;
   const key = open ? undefined : (flags.key || randomBytes(8).toString("base64url"));
 
-  // Use the port the relay actually bound (matters when --port 0 picks one).
-  const { port } = await startRelay({ port: requested, key, verbose: true });
+  // The relay only ever holds the derived auth token, never the room key — so it
+  // can gate joins but can't decrypt the end-to-end-encrypted traffic.
+  const { port } = await startRelay({ port: requested, authToken: deriveAuthToken(key), verbose: true });
   const ips = lanAddresses();
   const keyFlag = key ? ` --key ${key}` : "";
 
   console.error("");
-  if (key) console.error(`Quorum relay is up · 🔒 room key: ${key}`);
+  if (key) console.error(`Quorum relay is up · 🔒 room key: ${key} · end-to-end encrypted`);
   else console.error("Quorum relay is up · ⚠ open (no key — anyone who reaches it can join)");
   console.error("\nShare this invite with friends:\n");
   console.error("  Same network (same Wi-Fi / LAN):");

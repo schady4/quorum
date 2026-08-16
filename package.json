@@ -44,7 +44,8 @@
     "test:reconnect": "tsx test/reconnect.test.ts",
     "test:auth": "tsx test/auth.test.ts",
     "test:keepalive": "tsx test/keepalive.test.ts",
-    "test:all": "npm run test && npm run test:net && npm run test:agent && npm run test:delegate && npm run test:ledger && npm run test:session && npm run test:config && npm run test:router && npm run test:responder && npm run test:durable && npm run test:reconnect && npm run test:auth && npm run test:keepalive",
+    "test:e2e": "tsx test/e2e.test.ts",
+    "test:all": "npm run test && npm run test:net && npm run test:agent && npm run test:delegate && npm run test:ledger && npm run test:session && npm run test:config && npm run test:router && npm run test:responder && npm run test:durable && npm run test:reconnect && npm run test:auth && npm run test:keepalive && npm run test:e2e",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [

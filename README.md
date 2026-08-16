@@ -13,7 +13,7 @@ up whichever providers you want.
 > participants, multi-model router with delegation, DAG threads in live chat,
 > and now packaging: `quorum setup` prompts for the credentials of whichever
 > providers you enable and stores them locally, and the package publishes to
-> npm so friends install it in one line. 87 tests across 13 suites. Plan and
+> npm so friends install it in one line. 93 tests across 14 suites. Plan and
 > architecture live in the sibling repo —
 > [`multiplayer-ai/ROADMAP.md`](https://github.com/schady4/multiplayer-ai/blob/main/ROADMAP.md)
 > ([tracking epic](https://github.com/schady4/multiplayer-ai/issues/8)).
@@ -69,10 +69,15 @@ quorum providers                                     List installable providers 
 quorum --help                                        Usage
 ```
 
-**Room access.** `quorum host` is secure by default: it generates a shared
-room key and prints a ready invite line (`… --relay … --key <secret>`). Only
-clients that present the matching key are admitted — the relay refuses the
-rest. Pass your own with `--key`, or run a keyless local relay with `--open`.
+**Room access & encryption.** `quorum host` is secure by default: it generates
+a shared room key and prints a ready invite line (`… --relay … --key <secret>`).
+From that one key each client derives, independently, a relay **auth token** and
+an **encryption key**. The relay is configured with only the token — a one-way
+derivation — so it gates joins but can't read the traffic: chat and decision
+values are sealed with AES-256-GCM end-to-end, and the relay is a zero-knowledge
+mailbox. Structural metadata (who's present, message ordering, branch names and
+decision keys) stays in the clear so convergence still works. Pass your own key
+with `--key`, or run a keyless, unencrypted local relay with `--open`.
 
 Try it locally — a relay, a human, and an AI seat sharing one converged room:
 

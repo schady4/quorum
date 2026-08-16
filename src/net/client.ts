@@ -55,6 +55,14 @@ export class RoomClient extends EventEmitter {
   private attempt = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
+  /** Client-side liveness. If a whole interval passes with no activity from the
+   *  relay — no pong, message, or ping — the relay is presumed gone (sleep, NAT
+   *  drop, crash) even though the socket never closed, so we terminate it and
+   *  let the reconnect loop take over. Tunable by callers and tests. */
+  readonly heartbeat = { intervalMs: 15_000 };
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private sawActivity = false;
+
   constructor(
     readonly url: string,
     readonly room: string,
@@ -114,10 +122,17 @@ export class RoomClient extends EventEmitter {
     ws.on("open", () => {
       this.attempt = 0; // a successful connection resets the backoff
       ws.send(encode({ t: "hello", room: this.room, handle: this.handle, auth: this.crypto.authToken, clientId: this.clientId }));
+      this.startHeartbeat();
       this.emit("open");
     });
 
+    // Any traffic from the relay — a frame, a pong to our ping, or its own ping
+    // — proves it's still there. The library auto-answers relay pings for us.
+    ws.on("pong", () => (this.sawActivity = true));
+    ws.on("ping", () => (this.sawActivity = true));
+
     ws.on("message", (data: Buffer) => {
+      this.sawActivity = true;
       const msg = decode(data.toString());
       if (msg.t === "welcome") {
         for (const op of msg.ops) this.surface.apply(op);
@@ -155,6 +170,7 @@ export class RoomClient extends EventEmitter {
     });
 
     ws.on("close", () => {
+      this.stopHeartbeat();
       this.emit("close");
       if (!this.closing) this.scheduleReconnect();
     });
@@ -164,6 +180,35 @@ export class RoomClient extends EventEmitter {
     ws.on("error", (err: Error) => {
       if (this.listenerCount("error")) this.emit("error", err);
     });
+  }
+
+  private startHeartbeat(): void {
+    this.stopHeartbeat();
+    this.sawActivity = true; // a fresh connection starts alive
+    this.heartbeatTimer = setInterval(() => {
+      if (this.ws?.readyState !== WebSocket.OPEN) return;
+      if (!this.sawActivity) {
+        // A whole interval of silence: the relay is gone but the socket never
+        // closed. Kill it ourselves so `close` fires and reconnect takes over.
+        this.stopHeartbeat();
+        this.ws.terminate();
+        return;
+      }
+      this.sawActivity = false;
+      try {
+        this.ws.ping();
+      } catch {
+        /* socket not writable — the next tick's readyState check handles it */
+      }
+    }, this.heartbeat.intervalMs);
+    this.heartbeatTimer.unref?.(); // never keep the process alive just for this
+  }
+
+  private stopHeartbeat(): void {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
   }
 
   private scheduleReconnect(): void {
@@ -288,6 +333,7 @@ export class RoomClient extends EventEmitter {
    *  Sets the `closing` flag so the drop that follows does not trigger a retry. */
   close(): void {
     this.closing = true;
+    this.stopHeartbeat();
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;

@@ -58,7 +58,7 @@ export function startRelay(opts: RelayOptions): Promise<RelayHandle> {
 
   const roster = (r: Room): string[] => [...r.clients.values()];
 
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const wss = new WebSocketServer({ port: opts.port }, () => {
       const port = (wss.address() as AddressInfo).port;
       log(`quorum relay listening on ws://localhost:${port}`);
@@ -71,6 +71,10 @@ export function startRelay(opts: RelayOptions): Promise<RelayHandle> {
           }),
       });
     });
+
+    // A bind failure (e.g. port in use) must reject the promise, not hang the
+    // awaiter forever. After `resolve` above has run, this reject is a no-op.
+    wss.on("error", reject);
 
     wss.on("connection", (ws: WebSocket) => {
       let joined: Room | null = null;

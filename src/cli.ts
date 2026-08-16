@@ -7,6 +7,7 @@
 //   quorum providers                            list installable providers
 //   quorum --help                               usage
 
+import { networkInterfaces } from "node:os";
 import { providers, getProvider } from "./providers/index.js";
 import { startRelay } from "./relay/server.js";
 import { runTui } from "./tui/app.js";
@@ -61,11 +62,41 @@ async function listProviders(): Promise<void> {
   console.log("Add a model vendor by dropping an adapter in src/providers/ — see providers/types.ts.");
 }
 
+/** This machine's non-internal IPv4 addresses — the ones a friend on the same
+ *  network would dial. Empty on an odd network setup; we fall back to a
+ *  placeholder then. */
+function lanAddresses(): string[] {
+  const out: string[] = [];
+  for (const ifaces of Object.values(networkInterfaces())) {
+    for (const ni of ifaces ?? []) {
+      // Node reports family as "IPv4" (newer) or 4 (older).
+      const v4 = ni.family === "IPv4" || (ni.family as unknown) === 4;
+      if (v4 && !ni.internal) out.push(ni.address);
+    }
+  }
+  return out;
+}
+
 async function host(args: string[]): Promise<void> {
   const { flags } = parse(args);
-  const port = Number(flags.port ?? 8787);
-  await startRelay({ port, verbose: true });
-  console.error(`Share this room by having friends run:  quorum join <room> --relay ws://<your-host>:${port}`);
+  const requested = Number(flags.port ?? 8787);
+  // Use the port the relay actually bound (matters when --port 0 picks one).
+  const { port } = await startRelay({ port: requested, verbose: true });
+  const ips = lanAddresses();
+
+  console.error("\nQuorum relay is up. Share it with friends:\n");
+  console.error("  Same network (same Wi-Fi / LAN):");
+  if (ips.length) {
+    for (const ip of ips) console.error(`    quorum join <room> --relay ws://${ip}:${port}`);
+  } else {
+    console.error(`    quorum join <room> --relay ws://<this-machine-ip>:${port}`);
+  }
+  console.error("\n  Different networks (friends elsewhere): a private IP isn't reachable");
+  console.error("  from outside, and port " + port + " is often firewalled. Expose it with a");
+  console.error("  tunnel — you get a public wss:// URL over 443 that restrictive networks allow:");
+  console.error(`    ngrok http ${port}                          -> quorum join <room> --relay wss://<id>.ngrok.app`);
+  console.error(`    cloudflared tunnel --url http://localhost:${port}  -> --relay wss://<id>.trycloudflare.com`);
+  console.error("");
   // startRelay keeps the process alive via the open server.
 }
 

@@ -24,6 +24,8 @@ export interface RoomClientEvents {
   ledger: (ledger: Ledger) => void;
   checkpoint: (op: CheckpointOp) => void;
   open: () => void;
+  /** A drop was detected and a reconnect is scheduled. */
+  reconnecting: (info: { attempt: number; delayMs: number }) => void;
   close: () => void;
   error: (err: Error) => void;
 }
@@ -38,6 +40,13 @@ export class RoomClient extends EventEmitter {
   private ws: WebSocket | null = null;
   participants: string[] = [];
 
+  /** Reconnect backoff schedule. Public so callers (and tests) can tune it; the
+   *  delay is baseMs * 2^attempt, capped at maxMs, plus up to 20% jitter. */
+  readonly reconnect = { baseMs: 500, maxMs: 15_000 };
+  private closing = false;
+  private attempt = 0;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
   constructor(
     readonly url: string,
     readonly room: string,
@@ -47,10 +56,16 @@ export class RoomClient extends EventEmitter {
   }
 
   connect(): void {
+    this.closing = false;
+    this.open();
+  }
+
+  private open(): void {
     const ws = new WebSocket(this.url);
     this.ws = ws;
 
     ws.on("open", () => {
+      this.attempt = 0; // a successful connection resets the backoff
       ws.send(encode({ t: "hello", room: this.room, handle: this.handle }));
       this.emit("open");
     });
@@ -82,11 +97,38 @@ export class RoomClient extends EventEmitter {
       }
     });
 
-    ws.on("close", () => this.emit("close"));
-    ws.on("error", (err: Error) => this.emit("error", err));
+    ws.on("close", () => {
+      this.emit("close");
+      if (!this.closing) this.scheduleReconnect();
+    });
+    // Guard the emit: with no "error" listener attached, a bare EventEmitter
+    // 'error' would throw and crash the process — exactly what we don't want
+    // during a transient drop, where the reconnect loop is the recovery path.
+    ws.on("error", (err: Error) => {
+      if (this.listenerCount("error")) this.emit("error", err);
+    });
   }
 
-  /** Post a message: apply locally for instant echo, then broadcast the op. */
+  private scheduleReconnect(): void {
+    if (this.closing || this.reconnectTimer) return;
+    const n = this.attempt++;
+    const base = Math.min(this.reconnect.maxMs, this.reconnect.baseMs * 2 ** n);
+    const delay = Math.round(base + Math.random() * base * 0.2);
+    this.emit("reconnecting", { attempt: n + 1, delayMs: delay });
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      if (!this.closing) this.open();
+    }, delay);
+  }
+
+  /** True only while the socket is open and ready to transmit. */
+  private get live(): boolean {
+    return this.ws?.readyState === WebSocket.OPEN;
+  }
+
+  /** Post a message: apply locally for instant echo, then broadcast the op.
+   *  During a reconnect window the local echo still lands; the broadcast is
+   *  simply skipped rather than throwing on a not-yet-open socket. */
   send(text: string): void {
     const op: InsertOp = {
       type: "insert",
@@ -97,7 +139,7 @@ export class RoomClient extends EventEmitter {
     };
     this.surface.apply(op);
     this.emit("update", this.surface.entries());
-    this.ws?.send(encode({ t: "op", op }));
+    if (this.live) this.ws!.send(encode({ t: "op", op }));
   }
 
   entries(): Entry[] {
@@ -124,13 +166,13 @@ export class RoomClient extends EventEmitter {
   checkpoint(handled: string): void {
     const op: CheckpointOp = { id: `${this.clientId}:${++this.counter}`, seat: this.handle, handled };
     this.applyCheckpoint(op);
-    this.ws?.send(encode({ t: "checkpoint", op }));
+    if (this.live) this.ws!.send(encode({ t: "checkpoint", op }));
   }
 
   private sendLedger(op: LedgerOp): void {
     this.ledger.apply(op);
     this.emit("ledger", this.ledger);
-    this.ws?.send(encode({ t: "ledger", op }));
+    if (this.live) this.ws!.send(encode({ t: "ledger", op }));
   }
 
   /** Fork the trunk decision-state into named branches. */
@@ -185,7 +227,14 @@ export class RoomClient extends EventEmitter {
     return { conflicts: prep.conflicts.length, arbitrated: viaArbitration };
   }
 
+  /** Intentional shutdown: cancel any pending reconnect and close the socket.
+   *  Sets the `closing` flag so the drop that follows does not trigger a retry. */
   close(): void {
+    this.closing = true;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     this.ws?.close();
   }
 }

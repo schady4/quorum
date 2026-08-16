@@ -58,18 +58,25 @@ function App({ client, resolver }: { client: RoomClient; resolver?: MergeResolve
   const [, forceLedger] = useState(0);
   const [draft, setDraft] = useState("");
   const [notice, setNotice] = useState("");
+  const [status, setStatus] = useState<"connecting" | "online" | "reconnecting">("connecting");
 
   useEffect(() => {
     const onUpdate = (e: Entry[]) => setEntries([...e]);
     const onPresence = (p: string[]) => setParticipants([...p]);
     const onLedger = () => forceLedger((n) => n + 1);
+    const onOpen = () => setStatus("online");
+    const onReconnecting = () => setStatus("reconnecting");
     client.on("update", onUpdate);
     client.on("presence", onPresence);
     client.on("ledger", onLedger);
+    client.on("open", onOpen);
+    client.on("reconnecting", onReconnecting);
     return () => {
       client.off("update", onUpdate);
       client.off("presence", onPresence);
       client.off("ledger", onLedger);
+      client.off("open", onOpen);
+      client.off("reconnecting", onReconnecting);
     };
   }, [client]);
 
@@ -134,7 +141,20 @@ function App({ client, resolver }: { client: RoomClient; resolver?: MergeResolve
     <Box flexDirection="column" paddingX={1}>
       <Box justifyContent="space-between" borderStyle="round" borderColor="gray" paddingX={1}>
         <Text color="blueBright">◇ quorum · #{client.room}</Text>
-        <Text color="gray">{participants.length ? participants.join(", ") : "connecting…"}</Text>
+        <Text>
+          <Text color={status === "online" ? "green" : status === "reconnecting" ? "yellow" : "gray"}>
+            {status === "online" ? "●" : "○"}{" "}
+          </Text>
+          <Text color="gray">
+            {status === "reconnecting"
+              ? "reconnecting…"
+              : status === "connecting"
+                ? "connecting…"
+                : participants.length
+                  ? participants.join(", ")
+                  : "…"}
+          </Text>
+        </Text>
       </Box>
 
       <LedgerView ledger={client.ledger} />

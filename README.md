@@ -88,7 +88,8 @@ The AI seat is model-agnostic: `--provider anthropic|openai|meta|kimi|local`
 selects the vendor and `--model` picks the model. All five have a real
 `generate()` — OpenAI, Meta/Llama, Kimi, and local servers share one
 OpenAI-compatible HTTP path, so any OpenAI-compatible endpoint works too.
-Credentials come from the environment for now; `quorum setup` (M5) will prompt.
+Credentials come from `quorum setup` (stored locally) or a `KEY=… quorum agent …`
+environment override — see [Install](#install).
 
 **Delegation.** A seat can spin up another seat on a different model to own a
 subtask. In the room:

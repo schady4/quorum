@@ -16,7 +16,7 @@ up whichever providers you want.
 > npm so friends install it in one line. Rooms are **secure by default** — one
 > shared key both gates joins and end-to-end encrypts the traffic, so the relay
 > is a zero-knowledge mailbox — and clients **auto-reconnect** through drops.
-> 96 tests across 15 suites. Plan and
+> 108 tests across 16 suites. Plan and
 > architecture live in the sibling repo —
 > [`multiplayer-ai/ROADMAP.md`](https://github.com/schady4/multiplayer-ai/blob/main/ROADMAP.md)
 > ([tracking epic](https://github.com/schady4/multiplayer-ai/issues/8)).
@@ -97,6 +97,11 @@ it reads the shared stream and replies into it. A late joiner catches up from
 the relay's op log. (Working from a clone instead of an install? `npm run build`
 first, then run `node dist/cli.js …` — or `npm run dev -- …` straight from
 source.)
+
+In the window: **Enter** sends, **↑/↓** recall your previous messages,
+**←/→ · Home/End** move the cursor, **PgUp/PgDn** scroll back through the
+history, **Esc** quits. The message pane is bounded to the terminal and stays
+pinned to the newest message unless you scroll up.
 
 ## Sharing with friends
 

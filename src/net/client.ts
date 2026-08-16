@@ -26,6 +26,8 @@ export interface RoomClientEvents {
   open: () => void;
   /** A drop was detected and a reconnect is scheduled. */
   reconnecting: (info: { attempt: number; delayMs: number }) => void;
+  /** The relay refused the join (e.g. wrong room key). Terminal — no retry. */
+  denied: (reason: string) => void;
   close: () => void;
   error: (err: Error) => void;
 }
@@ -51,6 +53,8 @@ export class RoomClient extends EventEmitter {
     readonly url: string,
     readonly room: string,
     readonly handle: string,
+    /** Shared room secret, sent in the hello. Omit against an open relay. */
+    readonly key?: string,
   ) {
     super();
   }
@@ -66,7 +70,7 @@ export class RoomClient extends EventEmitter {
 
     ws.on("open", () => {
       this.attempt = 0; // a successful connection resets the backoff
-      ws.send(encode({ t: "hello", room: this.room, handle: this.handle }));
+      ws.send(encode({ t: "hello", room: this.room, handle: this.handle, key: this.key }));
       this.emit("open");
     });
 
@@ -94,6 +98,16 @@ export class RoomClient extends EventEmitter {
       } else if (msg.t === "presence") {
         this.participants = msg.participants;
         this.emit("presence", this.participants);
+      } else if (msg.t === "denied") {
+        // A refused join won't succeed on retry — stop the reconnect loop and
+        // surface the reason. Prefer a "denied" listener; fall back to "error".
+        this.closing = true;
+        if (this.reconnectTimer) {
+          clearTimeout(this.reconnectTimer);
+          this.reconnectTimer = null;
+        }
+        if (this.listenerCount("denied")) this.emit("denied", msg.reason);
+        else if (this.listenerCount("error")) this.emit("error", new Error(`join denied: ${msg.reason}`));
       }
     });
 

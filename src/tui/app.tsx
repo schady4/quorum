@@ -58,7 +58,7 @@ function App({ client, resolver }: { client: RoomClient; resolver?: MergeResolve
   const [, forceLedger] = useState(0);
   const [draft, setDraft] = useState("");
   const [notice, setNotice] = useState("");
-  const [status, setStatus] = useState<"connecting" | "online" | "reconnecting">("connecting");
+  const [status, setStatus] = useState<"connecting" | "online" | "reconnecting" | "denied">("connecting");
 
   useEffect(() => {
     const onUpdate = (e: Entry[]) => setEntries([...e]);
@@ -66,17 +66,23 @@ function App({ client, resolver }: { client: RoomClient; resolver?: MergeResolve
     const onLedger = () => forceLedger((n) => n + 1);
     const onOpen = () => setStatus("online");
     const onReconnecting = () => setStatus("reconnecting");
+    const onDenied = (reason: string) => {
+      setStatus("denied");
+      setNotice(`join denied: ${reason} — check the room key (--key)`);
+    };
     client.on("update", onUpdate);
     client.on("presence", onPresence);
     client.on("ledger", onLedger);
     client.on("open", onOpen);
     client.on("reconnecting", onReconnecting);
+    client.on("denied", onDenied);
     return () => {
       client.off("update", onUpdate);
       client.off("presence", onPresence);
       client.off("ledger", onLedger);
       client.off("open", onOpen);
       client.off("reconnecting", onReconnecting);
+      client.off("denied", onDenied);
     };
   }, [client]);
 
@@ -142,17 +148,19 @@ function App({ client, resolver }: { client: RoomClient; resolver?: MergeResolve
       <Box justifyContent="space-between" borderStyle="round" borderColor="gray" paddingX={1}>
         <Text color="blueBright">◇ quorum · #{client.room}</Text>
         <Text>
-          <Text color={status === "online" ? "green" : status === "reconnecting" ? "yellow" : "gray"}>
+          <Text color={status === "online" ? "green" : status === "denied" ? "red" : status === "reconnecting" ? "yellow" : "gray"}>
             {status === "online" ? "●" : "○"}{" "}
           </Text>
           <Text color="gray">
-            {status === "reconnecting"
-              ? "reconnecting…"
-              : status === "connecting"
-                ? "connecting…"
-                : participants.length
-                  ? participants.join(", ")
-                  : "…"}
+            {status === "denied"
+              ? "denied"
+              : status === "reconnecting"
+                ? "reconnecting…"
+                : status === "connecting"
+                  ? "connecting…"
+                  : participants.length
+                    ? participants.join(", ")
+                    : "…"}
           </Text>
         </Text>
       </Box>
@@ -188,11 +196,12 @@ export interface RoomViewProps {
   relayUrl: string;
   room: string;
   handle: string;
+  key?: string;
   resolver?: MergeResolver;
 }
 
-export function runTui({ relayUrl, room, handle, resolver }: RoomViewProps): void {
-  const client = new RoomClient(relayUrl, room, handle);
+export function runTui({ relayUrl, room, handle, key, resolver }: RoomViewProps): void {
+  const client = new RoomClient(relayUrl, room, handle, key);
   client.connect();
   render(<App client={client} resolver={resolver} />);
 }

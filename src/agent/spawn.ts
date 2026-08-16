@@ -11,6 +11,9 @@ export interface SpawnConfig {
   relayUrl: string;
   room: string;
   handle: string;
+  /** Shared room secret, if the relay requires one. Inherited by any seat this
+   *  one delegates, so nested workers can join the same keyed room. */
+  key?: string;
   providerId?: string;
   model?: string;
   onReply?: (handle: string, text: string) => void;
@@ -40,6 +43,7 @@ export function spawnAgent(cfg: SpawnConfig): AgentSeat {
     relayUrl: cfg.relayUrl,
     room: cfg.room,
     handle: cfg.handle,
+    key: cfg.key,
     respond,
     onReply: (t) => cfg.onReply?.(cfg.handle, t),
     onError: (e) => cfg.onError?.(cfg.handle, e),
@@ -49,6 +53,7 @@ export function spawnAgent(cfg: SpawnConfig): AgentSeat {
         relayUrl: cfg.relayUrl,
         room: cfg.room,
         handle: spec.handle,
+        key: cfg.key, // children join the same keyed room
         providerId: spec.providerId ?? cfg.providerId,
         model: spec.model,
         onReply: cfg.onReply,

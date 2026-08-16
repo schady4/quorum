@@ -15,11 +15,21 @@ export interface CheckpointOp {
   handled: string;
 }
 
-/** client -> server, first frame after connecting. */
+/** client -> server, first frame after connecting. The optional `key` is the
+ *  shared room secret; a relay started with a key rejects a hello without the
+ *  matching one. Omitted against an open (keyless) relay. */
 export interface Hello {
   t: "hello";
   room: string;
   handle: string;
+  key?: string;
+}
+
+/** server -> client: the join was refused (e.g. wrong or missing room key).
+ *  The socket is closed right after; the client should not retry. */
+export interface Denied {
+  t: "denied";
+  reason: string;
 }
 
 /** server -> client, the catch-up frame: all op logs + who's here. */
@@ -57,7 +67,7 @@ export interface Presence {
 }
 
 export type ClientMsg = Hello | OpFrame | LedgerFrame | CheckpointFrame;
-export type ServerMsg = Welcome | OpFrame | LedgerFrame | CheckpointFrame | Presence;
+export type ServerMsg = Welcome | OpFrame | LedgerFrame | CheckpointFrame | Presence | Denied;
 
 export function encode(msg: ClientMsg | ServerMsg): string {
   return JSON.stringify(msg);

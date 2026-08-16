@@ -45,6 +45,8 @@ export interface AgentSeatOptions {
   relayUrl: string;
   room: string;
   handle: string;
+  /** Shared room secret, if the relay requires one. */
+  key?: string;
   respond: Responder;
   shouldRespond?: TriggerPolicy;
   /** Handle a delegation directive by spinning up another seat. When set, a
@@ -61,10 +63,14 @@ export class AgentSeat {
   private trigger: TriggerPolicy;
 
   constructor(private readonly opts: AgentSeatOptions) {
-    this.client = new RoomClient(opts.relayUrl, opts.room, opts.handle);
+    this.client = new RoomClient(opts.relayUrl, opts.room, opts.handle, opts.key);
     this.trigger = opts.shouldRespond ?? mentionTrigger;
     this.client.on("update", (entries: Entry[]) => {
       void this.onUpdate(entries);
+    });
+    // A refused join (wrong room key) is terminal — surface it to the caller.
+    this.client.on("denied", (reason: string) => {
+      this.opts.onError?.(new Error(`join denied: ${reason}`));
     });
   }
 

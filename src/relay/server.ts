@@ -4,10 +4,22 @@
 // replica, not something the server computes. Run your own, or point at a
 // shared one.
 
+import { timingSafeEqual } from "node:crypto";
 import { WebSocketServer, WebSocket, type AddressInfo } from "ws";
 import type { Op } from "../core/crdt.js";
 import type { LedgerOp } from "../core/ledger.js";
 import { decode, encode, type CheckpointOp, type ServerMsg } from "../net/protocol.js";
+
+/** Constant-time key check. An empty configured key means the relay is open
+ *  (no auth) — every join is allowed, preserving the keyless default. */
+function keyMatches(configured: string | undefined, provided: string | undefined): boolean {
+  if (!configured) return true;
+  if (typeof provided !== "string") return false;
+  const a = Buffer.from(configured);
+  const b = Buffer.from(provided);
+  // Length differs -> not equal; timingSafeEqual requires equal-length buffers.
+  return a.length === b.length && timingSafeEqual(a, b);
+}
 
 interface Room {
   /** Append-only chat-surface op log, deduped by op id. */
@@ -31,6 +43,9 @@ export interface RelayHandle {
 
 export interface RelayOptions {
   port: number;
+  /** Shared room secret. When set, a client must present the matching key in its
+   *  hello or the join is refused. Omit for an open relay (the default). */
+  key?: string;
   /** Log connections/joins to stderr. Off in tests. */
   verbose?: boolean;
 }
@@ -88,6 +103,12 @@ export function startRelay(opts: RelayOptions): Promise<RelayHandle> {
         }
 
         if (msg.t === "hello") {
+          if (!keyMatches(opts.key, msg.key)) {
+            log(`✗ ${msg.handle} denied on ${msg.room} (bad room key)`);
+            send(ws, { t: "denied", reason: "wrong or missing room key" });
+            ws.close();
+            return;
+          }
           const r = room(msg.room);
           r.clients.set(ws, msg.handle);
           joined = r;

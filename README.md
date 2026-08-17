@@ -61,6 +61,22 @@ providers you don't use, and nothing leaves your machine except the API calls
 themselves. A one-off `ANTHROPIC_API_KEY=… quorum agent …` env var overrides the
 stored value.
 
+Every key you enter is live-checked with one minimal real call right there in
+the prompt, so a bad or out-of-funds key is caught immediately — not the first
+time an AI seat tries to use it. `quorum agent` runs the same check on start,
+so a seat with a dead key refuses to join instead of sitting in the room
+silently failing on every future `@mention`.
+
+Managing what's saved doesn't require re-running the whole wizard:
+
+```bash
+quorum setup --status             # what's configured, per provider (masked)
+quorum setup --unset anthropic    # drop just one provider's keys
+quorum setup --wipe               # delete everything and start clean
+```
+
+Inside the interactive prompt, typing `-` for a saved value clears it.
+
 ## Commands
 
 ```
@@ -68,6 +84,7 @@ quorum host [--port <n>] [--key <secret>] [--open]   Start a relay/room server  
 quorum join <room> [--as <h>] [--relay <url>] [--key <s>] [--provider <id>]  Join ✓
 quorum agent <room> [--as <h>] [--provider <id>] [--model <id>] [--key <s>]  AI   ✓
 quorum setup                                         Configure providers + keys  ✓
+quorum setup --status | --unset <provider> | --wipe  Inspect / remove / reset    ✓
 quorum providers                                     List installable providers  ✓
 quorum --help                                        Usage
 ```

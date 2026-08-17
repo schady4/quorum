@@ -20,3 +20,32 @@ export function loadCredentials(provider: ProviderAdapter): Record<string, strin
 export function missingRequired(provider: ProviderAdapter, creds: Record<string, string>): string[] {
   return provider.credentials.filter((c) => c.required && !creds[c.key]).map((c) => c.key);
 }
+
+/** The cheapest model an adapter offers, so a validation probe never reaches
+ *  for the most expensive one. Falls back to whatever's listed first; a
+ *  provider with no static list (e.g. "local", whose models live on the
+ *  user's own server) returns undefined — nothing to probe against. */
+function probeModel(models: { id: string; strengths?: string[] }[]): string | undefined {
+  return models.find((m) => m.strengths?.includes("cheap"))?.id ?? models[0]?.id;
+}
+
+/**
+ * Fire one minimal real call to confirm credentials actually work — not just
+ * that they're present. This is what catches a bad or out-of-funds key at
+ * `quorum setup` time instead of leaving it to silently fail on every future
+ * @mention. Skipped (reported ok) for adapters with no listable default model,
+ * since there's nothing meaningful to probe.
+ */
+export async function testProvider(
+  provider: ProviderAdapter,
+  creds: Record<string, string>,
+): Promise<{ ok: boolean; message?: string }> {
+  const model = probeModel(await provider.listModels());
+  if (!model) return { ok: true };
+  try {
+    await provider.generate({ model, maxTokens: 5, messages: [{ role: "user", content: "Reply with just: OK" }] }, creds);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, message: err instanceof Error ? err.message : String(err) };
+  }
+}

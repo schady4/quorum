@@ -5,7 +5,7 @@
 
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { mkdirSync, readFileSync, writeFileSync, chmodSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync, chmodSync, unlinkSync } from "node:fs";
 
 export function configDir(): string {
   return process.env.QUORUM_CONFIG_DIR || join(homedir(), ".quorum");
@@ -34,6 +34,18 @@ export function saveStore(store: Record<string, string>): string {
     chmodSync(path, 0o600); // enforce perms even if the file pre-existed
   } catch {
     /* best effort on platforms without chmod */
+  }
+  return path;
+}
+
+/** Delete the whole credentials file — the "start over" escape hatch. Missing
+ *  file is not an error. Returns the path that was (or would have been) wiped. */
+export function wipeStore(): string {
+  const path = credentialsPath();
+  try {
+    unlinkSync(path);
+  } catch {
+    /* already gone */
   }
   return path;
 }

@@ -15,7 +15,7 @@ import { deriveAuthToken } from "./net/crypto.js";
 import { runTui } from "./tui/app.js";
 import { spawnAgent } from "./agent/spawn.js";
 import { createMergeResolver } from "./agent/merge.js";
-import { loadCredentials, missingRequired } from "./config/credentials.js";
+import { loadCredentials, missingRequired, testProvider } from "./config/credentials.js";
 import { runSetup } from "./config/setup.js";
 
 const [, , cmd, ...rest] = process.argv;
@@ -44,6 +44,9 @@ Usage:
   quorum agent <room> [--as <handle>] [--key <secret>] [--provider <id>] [--model <id>] [--relay <url>]
                                                Seat an AI participant in a room
   quorum setup                                 Configure model providers + keys (interactive)
+  quorum setup --status                        Show which providers/keys are configured
+  quorum setup --unset <provider>              Remove one provider's saved keys
+  quorum setup --wipe [--yes]                  Delete all saved credentials
   quorum providers                             List installable model providers
   quorum --help                                Show this help
 
@@ -129,7 +132,7 @@ function join(args: string[]): void {
   runTui({ relayUrl, room, handle, key: flags.key, resolver });
 }
 
-function agent(args: string[]): void {
+async function agent(args: string[]): Promise<void> {
   const { positionals, flags } = parse(args);
   const room = positionals[0];
   if (!room) {
@@ -147,9 +150,24 @@ function agent(args: string[]): void {
     console.error(`Unknown provider "${providerId}". Run \`quorum providers\` to list them.`);
     process.exit(1);
   }
-  const missing = missingRequired(provider, loadCredentials(provider));
+  const creds = loadCredentials(provider);
+  const missing = missingRequired(provider, creds);
   if (missing.length) {
     console.error(`Warning: ${provider.id} is missing ${missing.join(", ")} — run \`quorum setup\` or set them as env vars, or the seat can't reply.`);
+  } else {
+    // Credentials are present but that doesn't mean they work (expired,
+    // revoked, out of funds) — a seat that joins on a dead key just fails the
+    // same way on every future @mention. Catch it here instead, once, before
+    // the seat ever shows up in the room.
+    process.stderr.write(`Checking ${provider.label} credentials… `);
+    const check = await testProvider(provider, creds);
+    if (!check.ok) {
+      console.error(`✗\n${check.message}`);
+      console.error(`Fix it:    quorum setup`);
+      console.error(`Clear it:  quorum setup --unset ${provider.id}`);
+      process.exit(1);
+    }
+    console.error("✓");
   }
 
   spawnAgent({
@@ -178,10 +196,10 @@ async function main(): Promise<void> {
       join(rest);
       break;
     case "agent":
-      agent(rest);
+      await agent(rest);
       break;
     case "setup":
-      await runSetup();
+      await runSetup(rest);
       break;
     case "--help":
     case "-h":

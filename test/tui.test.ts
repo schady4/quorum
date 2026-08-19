@@ -5,7 +5,7 @@
 
 import { EMPTY, fromValue, insert, backspace, del, left, right, home, end, pushHistory, historyValue } from "../src/tui/lineedit.js";
 import { windowFor, clampOffset } from "../src/tui/viewport.js";
-import { maskForDisplay } from "../src/tui/app.js";
+import { maskForDisplay, deniedHelp } from "../src/tui/app.js";
 
 let passed = 0;
 const failures: string[] = [];
@@ -26,6 +26,10 @@ function eq<T>(actual: T, expected: T, msg = ""): void {
   const a = JSON.stringify(actual);
   const e = JSON.stringify(expected);
   if (a !== e) throw new Error(`${msg}\n      expected ${e}\n      got      ${a}`);
+}
+
+function ok(cond: boolean, msg: string): void {
+  if (!cond) throw new Error(msg);
 }
 
 // --- line editor -------------------------------------------------------------
@@ -115,6 +119,22 @@ test("maskForDisplay doesn't mask while only the provider id is typed", () => {
 
 test("maskForDisplay handles a named credential key before the value", () => {
   eq(maskForDisplay("/key openai OPENAI_API_KEY sk-xyz"), "/key openai " + "•".repeat("OPENAI_API_KEY sk-xyz".length));
+});
+
+// --- denied-join helper text ---------------------------------------------
+// A denied join is always one of two relay-reported reasons; each should
+// steer toward its one real fix, not a generic "check the key" for both.
+
+test("deniedHelp points a handle collision at picking a new --as", () => {
+  const msg = deniedHelp('handle "claude" is already in use in this room', "ws://localhost:8787");
+  ok(msg.includes("--as"), "should mention the fix (a different --as handle)");
+  ok(!msg.includes("quorum host"), "a handle collision isn't a key problem — shouldn't send them to the host's key");
+});
+
+test("deniedHelp points a bad/missing key at the host's invite line", () => {
+  const msg = deniedHelp("wrong or missing room key", "ws://localhost:8787");
+  ok(msg.includes("quorum host"), "should point at the host as the source of truth for the key");
+  ok(msg.includes("ws://localhost:8787"), "should echo the relay URL actually being used");
 });
 
 console.log(`\n${passed} passed, ${failures.length} failed`);

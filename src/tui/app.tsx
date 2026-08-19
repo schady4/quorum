@@ -33,6 +33,21 @@ function colorFor(author: string): (typeof INK_HANDLE_PALETTE)[number] {
   return INK_HANDLE_PALETTE[hueIndex(author, INK_HANDLE_PALETTE.length)];
 }
 
+/** A denied join is always one of two things — a stale/missing room key, or a
+ *  handle collision — and each has one concrete fix. Turn the relay's bare
+ *  reason string into that fix instead of leaving someone to guess whether the
+ *  problem is their key, their handle, or the relay address. */
+export function deniedHelp(reason: string, relayUrl: string): string {
+  if (reason.includes("already in use")) {
+    return `join denied — ${reason}. Pick a different --as handle (someone already holds this one — maybe you, in another window).`;
+  }
+  return (
+    `join denied — ${reason}. Ask whoever ran \`quorum host\` for their invite line ` +
+    `(it looks like: quorum join <room> --relay ${relayUrl} --key <key>), or if that's ` +
+    `you, check that terminal for the key it printed.`
+  );
+}
+
 /** Display-only masking for `/key <provider> <secret>` while it's being typed
  *  — the underlying Line keeps the real value (needed to submit it correctly),
  *  only the on-screen render swaps the secret portion for bullets. */
@@ -90,6 +105,10 @@ function App({ client, resolver }: { client: RoomClient; resolver?: MergeResolve
   const [line, setLine] = useState<Line>(EMPTY);
   const [notice, setNotice] = useState("");
   const [status, setStatus] = useState<"connecting" | "online" | "reconnecting" | "denied">("connecting");
+  // A separate, dedicated line for "is this even set up right?" — kept apart
+  // from `notice` so a stuck connection's hint can't be clobbered by (or
+  // clobber) command feedback, and vice versa.
+  const [connHint, setConnHint] = useState("");
 
   // ↑/↓ command history, with the live draft stashed while recalling.
   const [history, setHistory] = useState<string[]>([]);
@@ -120,11 +139,24 @@ function App({ client, resolver }: { client: RoomClient; resolver?: MergeResolve
     const onUpdate = (e: Entry[]) => setEntries([...e]);
     const onPresence = (p: string[]) => setParticipants([...p]);
     const onLedger = () => forceLedger((n) => n + 1);
-    const onOpen = () => setStatus("online");
-    const onReconnecting = () => setStatus("reconnecting");
+    const onOpen = () => {
+      setStatus("online");
+      setConnHint(""); // whatever was wrong (if anything) no longer is
+    };
+    const onReconnecting = (info: { attempt: number; delayMs: number }) => {
+      setStatus("reconnecting");
+      // One failed attempt is a normal blip (relay restart, laptop woke up) —
+      // stay quiet. A run of them, still on the very first connection, is the
+      // "I don't think this is set up right" case: nothing is listening at
+      // this address, or it's the wrong one entirely.
+      if (info.attempt >= 3) {
+        setConnHint(`still can't reach ${client.url} after ${info.attempt} tries — is \`quorum host\` running there? check --relay if this address looks wrong.`);
+      }
+    };
     const onDenied = (reason: string) => {
       setStatus("denied");
-      setNotice(`join denied: ${reason} — check the room key (--key)`);
+      setConnHint("");
+      setNotice(deniedHelp(reason, client.url));
     };
     client.on("update", onUpdate);
     client.on("presence", onPresence);
@@ -278,9 +310,9 @@ function App({ client, resolver }: { client: RoomClient; resolver?: MergeResolve
   }
 
   // Size the message viewport to whatever rows are left after the fixed chrome
-  // (header 3 · ledger · scroll hint 1 · message padding 2 · notice 1 · input 3
-  // · footer 1), then take the visible slice.
-  const viewportRows = Math.max(3, rows - (11 + ledgerHeight(client.ledger)));
+  // (header 3 · conn hint 1 · ledger · scroll hint 1 · message padding 2 ·
+  // notice 1 · input 3 · footer 1), then take the visible slice.
+  const viewportRows = Math.max(3, rows - (12 + ledgerHeight(client.ledger)));
   viewportRef.current = viewportRows;
   const win = windowFor(entries.length, viewportRows, offset);
   const visible = entries.slice(win.start, win.end);
@@ -381,6 +413,9 @@ function App({ client, resolver }: { client: RoomClient; resolver?: MergeResolve
           </Text>
         </Text>
       </Box>
+
+      {/* one fixed line so the viewport height stays stable, blank when there's nothing to flag */}
+      <Text color="yellow">{connHint || " "}</Text>
 
       <LedgerView ledger={client.ledger} />
 

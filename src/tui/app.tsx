@@ -286,6 +286,20 @@ function App({ client, resolver }: { client: RoomClient; resolver?: MergeResolve
   const visible = entries.slice(win.start, win.end);
 
   useInput((input, key) => {
+    // A denied join is terminal — client.ts never retries it, so nothing typed
+    // from here on can ever reach anyone. RoomClient.send() still applies an
+    // optimistic local echo even when the socket isn't live (that's what makes
+    // reconnect-and-catch-up work), which on a *denied* room instead produces a
+    // phantom message that looks sent but never left the machine. Refuse all
+    // input but quit once denied, rather than let that illusion happen.
+    if (status === "denied") {
+      if (key.escape) {
+        client.close();
+        app.exit();
+      }
+      return;
+    }
+
     // Scroll the message history.
     if (key.pageUp) return setOffset((o) => clampOffset(entries.length, viewportRows, o + Math.max(1, viewportRows - 1)));
     if (key.pageDown) return setOffset((o) => clampOffset(entries.length, viewportRows, o - Math.max(1, viewportRows - 1)));
@@ -393,18 +407,24 @@ function App({ client, resolver }: { client: RoomClient; resolver?: MergeResolve
 
       {/* one fixed line, blank when there's no notice */}
       <Text color="yellow">{notice || " "}</Text>
-      <Box borderStyle="round" borderColor="gray" paddingX={1}>
-        <Text color={colorFor(client.handle)}>{client.handle} ▸ </Text>
-        {(() => {
-          const display = maskForDisplay(line.value); // masks a /key secret on screen only
-          return (
-            <>
-              <Text>{display.slice(0, line.cursor)}</Text>
-              <Text inverse>{display[line.cursor] ?? " "}</Text>
-              <Text>{display.slice(line.cursor + 1)}</Text>
-            </>
-          );
-        })()}
+      <Box borderStyle="round" borderColor={status === "denied" ? "red" : "gray"} paddingX={1}>
+        {status === "denied" ? (
+          <Text color="gray">room denied — nothing typed here can send · esc to quit</Text>
+        ) : (
+          <>
+            <Text color={colorFor(client.handle)}>{client.handle} ▸ </Text>
+            {(() => {
+              const display = maskForDisplay(line.value); // masks a /key secret on screen only
+              return (
+                <>
+                  <Text>{display.slice(0, line.cursor)}</Text>
+                  <Text inverse>{display[line.cursor] ?? " "}</Text>
+                  <Text>{display.slice(line.cursor + 1)}</Text>
+                </>
+              );
+            })()}
+          </>
+        )}
       </Box>
       <Text color="gray"> enter: send · ↑↓ history · ←→ move · PgUp/PgDn scroll · esc: quit · /agent to add an AI · /help</Text>
     </Box>

@@ -54,6 +54,10 @@ export interface AgentSeatOptions {
   onDelegate?: (spec: DelegateSpec) => void;
   onReply?: (text: string) => void;
   onError?: (err: Error) => void;
+  /** Fired right before a reply generation call starts, so a caller can show a
+   *  "thinking" indicator instead of leaving the terminal silent mid-request —
+   *  a slow model shouldn't look indistinguishable from a stuck one. */
+  onThinking?: () => void;
 }
 
 export class AgentSeat {
@@ -129,6 +133,7 @@ export class AgentSeat {
     }
 
     this.busy = true;
+    this.opts.onThinking?.();
     try {
       const reply = await this.opts.respond(entries, this.opts.handle);
       if (reply) {

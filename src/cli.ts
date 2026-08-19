@@ -17,6 +17,7 @@ import { spawnAgent } from "./agent/spawn.js";
 import { createMergeResolver } from "./agent/merge.js";
 import { loadCredentials, missingRequired, testProvider } from "./config/credentials.js";
 import { runSetup } from "./config/setup.js";
+import { style, box, Spinner, colorForHandle } from "./ui/style.js";
 
 const [, , cmd, ...rest] = process.argv;
 
@@ -33,41 +34,47 @@ function parse(args: string[]): { positionals: string[]; flags: Record<string, s
 }
 
 function usage(): void {
-  console.log(`quorum — multiplayer AI in your terminal
+  const cmd = (s: string) => style.bold(s, process.stdout);
+  console.log(`${style.brand("◇ quorum", process.stdout)} — multiplayer AI in your terminal
 
 Usage:
-  quorum host [--port <n>] [--key <secret>] [--open]
+  ${cmd("quorum host")} [--port <n>] [--key <secret>] [--open]
                                                Start a relay/room server (default 8787).
                                                Generates a room key unless --open.
-  quorum join <room> [--as <handle>] [--relay <url>] [--key <secret>] [--provider <id>] [--model <id>]
+  ${cmd("quorum join")} <room> [--as <handle>] [--relay <url>] [--key <secret>] [--provider <id>] [--model <id>]
                                                Join a room (provider enables merge arbitration)
-  quorum agent <room> [--as <handle>] [--key <secret>] [--provider <id>] [--model <id>] [--relay <url>]
+  ${cmd("quorum agent")} <room> [--as <handle>] [--key <secret>] [--provider <id>] [--model <id>] [--relay <url>]
                                                Seat an AI participant in a room
-  quorum setup                                 Configure model providers + keys (interactive)
-  quorum setup --status                        Show which providers/keys are configured
-  quorum setup --unset <provider>              Remove one provider's saved keys
-  quorum setup --wipe [--yes]                  Delete all saved credentials
-  quorum providers                             List installable model providers
-  quorum --help                                Show this help
+  ${cmd("quorum setup")}                                 Configure model providers + keys (interactive)
+  ${cmd("quorum setup --status")}                        Show which providers/keys are configured
+  ${cmd("quorum setup --unset")} <provider>              Remove one provider's saved keys
+  ${cmd("quorum setup --wipe")} [--yes]                  Delete all saved credentials
+  ${cmd("quorum providers")}                             List installable model providers
+  ${cmd("quorum --help")}                                Show this help
 
-Try it locally: run \`quorum host --open\`, then \`quorum join lobby --as you\` in
-one terminal and \`quorum agent lobby --as claude\` in another. Mention @claude to
-talk to it (needs the provider's API key in the environment). Drop --open and
-host prints a room key + invite to share with friends (see \`quorum host\`).
+${style.dim("Try it locally: run `quorum host --open`, then `quorum join lobby --as you` in", process.stdout)}
+${style.dim("one terminal and `quorum agent lobby --as claude` in another. Mention @claude to", process.stdout)}
+${style.dim("talk to it (needs the provider's API key in the environment). Drop --open and", process.stdout)}
+${style.dim("host prints a room key + invite to share with friends (see `quorum host`).", process.stdout)}
 `);
 }
 
 async function listProviders(): Promise<void> {
-  console.log("Installable model providers:\n");
+  console.log(style.brand("◇ Installable model providers", process.stdout) + "\n");
   for (const p of providers) {
     const models = await p.listModels();
     const modelList = models.length ? models.map((m) => m.id).join(", ") : "(user-defined)";
     const creds = p.credentials.filter((c) => c.required).map((c) => c.key).join(", ") || "none";
-    console.log(`  ${p.id.padEnd(10)} ${p.label}`);
-    console.log(`  ${" ".repeat(10)} models: ${modelList}`);
-    console.log(`  ${" ".repeat(10)} needs:  ${creds}\n`);
+    const configured = missingRequired(p, loadCredentials(p)).length === 0;
+    const badge = configured ? style.ok("● configured", process.stdout) : style.dim("○ not configured", process.stdout);
+    console.log(
+      box([`${style.bold(p.label, process.stdout)}  ${style.dim(p.id, process.stdout)}`, `models: ${modelList}`, `needs:  ${creds}`, badge], {
+        stream: process.stdout,
+      }),
+    );
+    console.log("");
   }
-  console.log("Add a model vendor by dropping an adapter in src/providers/ — see providers/types.ts.");
+  console.log(style.dim("Add a model vendor by dropping an adapter in src/providers/ — see providers/types.ts.", process.stdout));
 }
 
 /** This machine's non-internal IPv4 addresses — the ones a friend on the same
@@ -95,25 +102,39 @@ async function host(args: string[]): Promise<void> {
 
   // The relay only ever holds the derived auth token, never the room key — so it
   // can gate joins but can't decrypt the end-to-end-encrypted traffic.
+  const spinner = new Spinner("starting relay");
+  spinner.start();
   const { port } = await startRelay({ port: requested, authToken: deriveAuthToken(key), verbose: true });
+  spinner.stop();
+
   const ips = lanAddresses();
   const keyFlag = key ? ` --key ${key}` : "";
 
+  const security = key
+    ? `${style.ok("🔒 room key:")} ${style.bold(key)} · ${style.ok("end-to-end encrypted")}`
+    : style.warn("⚠ open — no key, anyone who reaches it can join");
+
+  // Kept out of the box on purpose: these are copy-paste shell commands, and a
+  // couple run well past 80 columns — boxing them would force a hard wrap that
+  // breaks mid-command on a normal terminal. The box holds only what's short
+  // enough to always fit; commands get their own plain lines below it.
   console.error("");
-  if (key) console.error(`Quorum relay is up · 🔒 room key: ${key} · end-to-end encrypted`);
-  else console.error("Quorum relay is up · ⚠ open (no key — anyone who reaches it can join)");
-  console.error("\nShare this invite with friends:\n");
-  console.error("  Same network (same Wi-Fi / LAN):");
+  console.error(box([security], { title: `quorum relay · :${port}`, stream: process.stderr }));
+  console.error("");
+  console.error(style.bold("Same network (same Wi-Fi / LAN):"));
   if (ips.length) {
-    for (const ip of ips) console.error(`    quorum join <room> --relay ws://${ip}:${port}${keyFlag}`);
+    for (const ip of ips) console.error(style.dim(`  quorum join <room> --relay ws://${ip}:${port}${keyFlag}`));
   } else {
-    console.error(`    quorum join <room> --relay ws://<this-machine-ip>:${port}${keyFlag}`);
+    console.error(style.dim(`  quorum join <room> --relay ws://<this-machine-ip>:${port}${keyFlag}`));
   }
-  console.error("\n  Different networks (friends elsewhere): a private IP isn't reachable");
-  console.error("  from outside, and port " + port + " is often firewalled. Expose it with a");
-  console.error("  tunnel — you get a public wss:// URL over 443 that restrictive networks allow:");
-  console.error(`    ngrok http ${port}                          -> quorum join <room> --relay wss://<id>.ngrok.app${keyFlag}`);
-  console.error(`    cloudflared tunnel --url http://localhost:${port}  -> --relay wss://<id>.trycloudflare.com${keyFlag}`);
+  console.error("");
+  console.error(style.bold("Different networks (friends elsewhere):"));
+  console.error(style.dim("  a private IP isn't reachable from outside, and this port is often"));
+  console.error(style.dim("  firewalled — expose it with a tunnel for a public wss:// URL over 443:"));
+  console.error(`  ${style.dim("ngrok http " + port)}  →  quorum join <room> --relay wss://<id>.ngrok.app${keyFlag}`);
+  console.error(
+    `  ${style.dim(`cloudflared tunnel --url http://localhost:${port}`)}  →  quorum join <room> --relay wss://<id>.trycloudflare.com${keyFlag}`,
+  );
   console.error("");
   // startRelay keeps the process alive via the open server.
 }
@@ -153,22 +174,29 @@ async function agent(args: string[]): Promise<void> {
   const creds = loadCredentials(provider);
   const missing = missingRequired(provider, creds);
   if (missing.length) {
-    console.error(`Warning: ${provider.id} is missing ${missing.join(", ")} — run \`quorum setup\` or set them as env vars, or the seat can't reply.`);
+    console.error(style.warn(`Warning: ${provider.id} is missing ${missing.join(", ")} — run \`quorum setup\` or set them as env vars, or the seat can't reply.`));
   } else {
     // Credentials are present but that doesn't mean they work (expired,
     // revoked, out of funds) — a seat that joins on a dead key just fails the
     // same way on every future @mention. Catch it here instead, once, before
     // the seat ever shows up in the room.
-    process.stderr.write(`Checking ${provider.label} credentials… `);
+    const preflight = new Spinner(`checking ${provider.label} credentials`);
+    preflight.start();
     const check = await testProvider(provider, creds);
     if (!check.ok) {
-      console.error(`✗\n${check.message}`);
+      preflight.stop(`${style.err("✗")} ${check.message}`);
       console.error(`Fix it:    quorum setup`);
       console.error(`Clear it:  quorum setup --unset ${provider.id}`);
       process.exit(1);
     }
-    console.error("✓");
+    preflight.stop(`${style.ok(`✓ ${provider.label} is ready`)}`);
   }
+
+  // One "thinking…" spinner per seat handle, live for exactly the window
+  // between a trigger and its reply — a slow model stays visibly working
+  // instead of looking indistinguishable from a stuck one.
+  const thinking = new Map<string, Spinner>();
+  const paint = colorForHandle(handle);
 
   spawnAgent({
     relayUrl,
@@ -177,11 +205,23 @@ async function agent(args: string[]): Promise<void> {
     key,
     providerId,
     model,
-    onReply: (h, t) => console.error(`${h} ▸ ${t}`),
-    onError: (h, e) => console.error(`[${h}] ${e.message}`),
+    onThinking: (h) => {
+      const s = new Spinner(`${colorForHandle(h)(h)} thinking`);
+      thinking.set(h, s);
+      s.start();
+    },
+    onReply: (h, t) => {
+      thinking.get(h)?.stop(`${colorForHandle(h)(h)} ▸ ${t}`);
+      thinking.delete(h);
+    },
+    onError: (h, e) => {
+      thinking.get(h)?.stop();
+      thinking.delete(h);
+      console.error(`${style.err(`[${h}]`)} ${e.message}`);
+    },
   });
-  console.error(`AI seat "${handle}" joined ${room} via ${providerId}${model ? "/" + model : ""}. Mention @${handle} to talk to it.`);
-  console.error(`Delegate: "@${handle} delegate <name> using <provider>/<model> to <task>" spins up another seat.`);
+  console.error(`${style.ok("✓")} AI seat ${paint(`"${handle}"`)} joined ${style.bold(room)} via ${providerId}${model ? "/" + model : ""}. Mention @${handle} to talk to it.`);
+  console.error(style.dim(`Delegate: "@${handle} delegate <name> using <provider>/<model> to <task>" spins up another seat.`));
 }
 
 async function main(): Promise<void> {

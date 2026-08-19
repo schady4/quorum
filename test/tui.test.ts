@@ -5,6 +5,7 @@
 
 import { EMPTY, fromValue, insert, backspace, del, left, right, home, end, pushHistory, historyValue } from "../src/tui/lineedit.js";
 import { windowFor, clampOffset } from "../src/tui/viewport.js";
+import { maskForDisplay } from "../src/tui/app.js";
 
 let passed = 0;
 const failures: string[] = [];
@@ -90,6 +91,30 @@ test("windowFor clamps an over-scroll to the top", () => {
 test("windowFor shows everything when it all fits", () => {
   eq(windowFor(3, 10, 0), { start: 0, end: 3, hiddenAbove: 0, hiddenBelow: 0 });
   eq(windowFor(0, 5, 0), { start: 0, end: 0, hiddenAbove: 0, hiddenBelow: 0 });
+});
+
+// --- /key input masking -------------------------------------------------------
+// The line's real value must survive untouched (it's what actually gets
+// submitted) — only the on-screen render should ever swap the secret for bullets.
+
+test("maskForDisplay leaves ordinary chat untouched", () => {
+  eq(maskForDisplay("hey @claude how's it going"), "hey @claude how's it going");
+});
+
+test("maskForDisplay leaves other slash commands untouched", () => {
+  eq(maskForDisplay("/fork A B"), "/fork A B");
+});
+
+test("maskForDisplay masks the value after provider id, keeps the prefix readable", () => {
+  eq(maskForDisplay("/key anthropic sk-ant-abc123"), "/key anthropic " + "•".repeat("sk-ant-abc123".length));
+});
+
+test("maskForDisplay doesn't mask while only the provider id is typed", () => {
+  eq(maskForDisplay("/key anthropic"), "/key anthropic");
+});
+
+test("maskForDisplay handles a named credential key before the value", () => {
+  eq(maskForDisplay("/key openai OPENAI_API_KEY sk-xyz"), "/key openai " + "•".repeat("OPENAI_API_KEY sk-xyz".length));
 });
 
 console.log(`\n${passed} passed, ${failures.length} failed`);

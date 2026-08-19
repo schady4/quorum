@@ -18,6 +18,7 @@ export interface SpawnConfig {
   model?: string;
   onReply?: (handle: string, text: string) => void;
   onError?: (handle: string, err: Error) => void;
+  onThinking?: (handle: string) => void;
   /** How long to let a spawned child join before handing it the task (ms). */
   handoffDelayMs?: number;
   /** A worker seat is scoped to one delegated subtask: it answers from a bounded
@@ -47,6 +48,7 @@ export function spawnAgent(cfg: SpawnConfig): AgentSeat {
     respond,
     onReply: (t) => cfg.onReply?.(cfg.handle, t),
     onError: (e) => cfg.onError?.(cfg.handle, e),
+    onThinking: () => cfg.onThinking?.(cfg.handle),
     onDelegate: (spec: DelegateSpec) => {
       // Bring up the child on its chosen model...
       spawnAgent({
@@ -58,6 +60,7 @@ export function spawnAgent(cfg: SpawnConfig): AgentSeat {
         model: spec.model,
         onReply: cfg.onReply,
         onError: cfg.onError,
+        onThinking: cfg.onThinking,
         handoffDelayMs: handoff,
         worker: true, // scoped to the delegated subtask; nested delegation stays scoped too
       });

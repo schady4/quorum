@@ -120,6 +120,21 @@ In the window: **Enter** sends, **↑/↓** recall your previous messages,
 history, **Esc** quits. The message pane is bounded to the terminal and stays
 pinned to the newest message unless you scroll up.
 
+**You don't need a third terminal for your own AI.** A seat can be seated
+right from the chat window:
+
+```
+/agent claude --provider anthropic --model claude-sonnet-5
+/key anthropic sk-ant-...          (only if that provider isn't configured yet)
+```
+
+`/agent` seats a model in-process, using the room you're already in — no
+second `quorum agent` invocation, no separate shell. If the provider needs a
+key you haven't set, it tells you instead of failing silently; `/key` saves
+one right there (masked on screen as you type it) to the same store `quorum
+setup` writes to, so it's there for next time too. Both stay local like
+`/fork`/`/set`/`/merge` — neither is ever sent to the room.
+
 ## Sharing with friends
 
 Drop `--open` and `quorum host` is secure by default: it prints a room key and a

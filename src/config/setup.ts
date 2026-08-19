@@ -13,6 +13,7 @@
 import { providers } from "../providers/index.js";
 import { loadStore, saveStore, wipeStore, credentialsPath } from "./store.js";
 import { missingRequired, testProvider } from "./credentials.js";
+import { style, box, Spinner } from "../ui/style.js";
 
 const ETX = String.fromCharCode(3); // ctrl-c
 const DEL = String.fromCharCode(127); // backspace on most terminals
@@ -63,18 +64,19 @@ function mask(v: string): string {
 
 function printStatus(): void {
   const store = loadStore();
-  console.log(`Provider credentials — ${credentialsPath()}\n`);
+  console.log(style.brand(`◇ Provider credentials`, process.stdout) + style.dim(` — ${credentialsPath()}`, process.stdout) + "\n");
   for (const p of providers) {
-    console.log(`${p.id.padEnd(10)} ${p.label}`);
-    for (const c of p.credentials) {
+    const lines = p.credentials.map((c) => {
       const v = store[c.key];
-      const state = v ? mask(v) : c.required ? "not set (required)" : "not set (optional)";
-      console.log(`  ${c.key.padEnd(20)} ${state}`);
-    }
+      const state = v ? style.ok(mask(v), process.stdout) : c.required ? style.err("not set (required)", process.stdout) : style.dim("not set (optional)", process.stdout);
+      return `${c.key.padEnd(20)} ${state}`;
+    });
+    console.log(box(lines, { title: `${p.label}  ${p.id}`, stream: process.stdout }));
+    console.log("");
   }
-  console.log("\nFix or add a key:   quorum setup");
-  console.log("Remove one provider: quorum setup --unset <provider>");
-  console.log("Start over:          quorum setup --wipe");
+  console.log(style.dim("Fix or add a key:    quorum setup", process.stdout));
+  console.log(style.dim("Remove one provider: quorum setup --unset <provider>", process.stdout));
+  console.log(style.dim("Start over:          quorum setup --wipe", process.stdout));
 }
 
 function unsetProvider(id: string | undefined): void {
@@ -132,12 +134,13 @@ export async function runSetup(args: string[] = []): Promise<void> {
   }
 
   const store = loadStore();
-  console.log("quorum setup — configure model providers.");
-  console.log("Keys are stored locally only, readable just by you, and sent straight to each provider.\n");
+  console.log(box(["configure model providers", style.dim("keys are stored locally only, readable just by you,", process.stdout), style.dim("and sent straight to each provider.", process.stdout)], { title: "◇ quorum setup", stream: process.stdout }));
+  console.log("");
 
   for (const p of providers) {
     const alreadySet = p.credentials.every((c) => !c.required || store[c.key]);
-    const ans = (await readLine(`Enable ${p.label}?${alreadySet ? " [already set — Y/n]" : " [y/N]"} `)).trim().toLowerCase();
+    const dot = alreadySet ? style.ok("●", process.stdout) : style.dim("○", process.stdout);
+    const ans = (await readLine(`${dot} Enable ${style.bold(p.label, process.stdout)}?${alreadySet ? " [already set — Y/n]" : " [y/N]"} `)).trim().toLowerCase();
     const wants = alreadySet ? ans !== "n" && ans !== "no" : ans === "y" || ans === "yes";
     if (!wants) continue;
 
@@ -161,12 +164,13 @@ export async function runSetup(args: string[] = []): Promise<void> {
     const creds: Record<string, string> = {};
     for (const c of p.credentials) if (store[c.key]) creds[c.key] = store[c.key];
     if (missingRequired(p, creds).length === 0) {
-      process.stdout.write("  checking key… ");
+      const spinner = new Spinner("  checking key", process.stdout);
+      spinner.start();
       const result = await testProvider(p, creds);
       if (result.ok) {
-        console.log("✓ looks good");
+        spinner.stop(`  ${style.ok("✓ looks good", process.stdout)}`);
       } else {
-        console.log(`✗ ${result.message}`);
+        spinner.stop(`  ${style.err(`✗ ${result.message}`, process.stdout)}`);
         const ans2 = (await readLine("  Keep it anyway, or clear it? [keep/clear] (clear) ")).trim().toLowerCase();
         if (ans2 !== "keep" && ans2 !== "k") {
           for (const c of p.credentials) delete store[c.key];
@@ -178,6 +182,6 @@ export async function runSetup(args: string[] = []): Promise<void> {
   }
 
   const path = saveStore(store);
-  console.log(`Saved ${Object.keys(store).length} value(s) to ${path}`);
-  console.log("Next:  quorum host   ·   quorum join <room> --as you   ·   quorum agent <room> --provider <id>");
+  console.log(style.ok(`✓ Saved ${Object.keys(store).length} value(s) to ${path}`, process.stdout));
+  console.log(style.dim("Next:  quorum host   ·   quorum join <room> --as you   ·   quorum agent <room> --provider <id>", process.stdout));
 }

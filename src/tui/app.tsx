@@ -4,8 +4,16 @@
 // appear the same way; a seat is a seat.
 //
 // The input line doubles as a command line: lines starting with "/" drive the
-// ledger (fork / set / merge); everything else is a chat message. The view is a
-// pure function of the RoomClient's converged CRDT + ledger state.
+// ledger (fork / set / merge) and AI seats (agent / key) — everything else is
+// a chat message. The view is a pure function of the RoomClient's converged
+// CRDT + ledger state.
+//
+// `/agent` and `/key` exist so seating your own AI never requires a second
+// terminal: without them, a room creator who wants their own model has to
+// leave the chat, open another shell, and run `quorum agent` there — a drop-off
+// right at the moment they're most engaged. Both commands stay local (never
+// broadcast to the room, same as /fork /set /merge) and write through the same
+// credential store `quorum setup` uses, so either path stays in sync.
 
 import React, { useEffect, useRef, useState } from "react";
 import { render, Box, Text, useInput, useApp, useStdout } from "ink";
@@ -14,12 +22,23 @@ import type { Ledger, MergeResolver } from "../core/ledger.js";
 import { RoomClient } from "../net/client.js";
 import { type Line, EMPTY, fromValue, insert, backspace, del, left, right, home, end, pushHistory, historyValue } from "./lineedit.js";
 import { windowFor, clampOffset } from "./viewport.js";
+import { hueIndex, INK_HANDLE_PALETTE } from "../ui/style.js";
+import { spawnAgent } from "../agent/spawn.js";
+import type { AgentSeat } from "../agent/seat.js";
+import { providers, getProvider } from "../providers/index.js";
+import { loadCredentials, missingRequired, testProvider } from "../config/credentials.js";
+import { loadStore, saveStore } from "../config/store.js";
 
-const PALETTE = ["cyan", "yellow", "green", "magenta", "blue", "red"] as const;
-function colorFor(author: string): (typeof PALETTE)[number] {
-  let h = 0;
-  for (let i = 0; i < author.length; i++) h = (h * 31 + author.charCodeAt(i)) >>> 0;
-  return PALETTE[h % PALETTE.length];
+function colorFor(author: string): (typeof INK_HANDLE_PALETTE)[number] {
+  return INK_HANDLE_PALETTE[hueIndex(author, INK_HANDLE_PALETTE.length)];
+}
+
+/** Display-only masking for `/key <provider> <secret>` while it's being typed
+ *  — the underlying Line keeps the real value (needed to submit it correctly),
+ *  only the on-screen render swaps the secret portion for bullets. */
+export function maskForDisplay(value: string): string {
+  const m = /^(\/key\s+\S+\s+)([\s\S]*)$/.exec(value);
+  return m ? m[1] + "•".repeat(m[2].length) : value;
 }
 
 function kv(state: Record<string, string>): string {
@@ -76,6 +95,19 @@ function App({ client, resolver }: { client: RoomClient; resolver?: MergeResolve
   const [history, setHistory] = useState<string[]>([]);
   const [histIndex, setHistIndex] = useState(0);
   const draftStash = useRef("");
+
+  // AI seats spawned in-process via /agent — closed alongside our own
+  // connection on quit, and tracked here (not the room roster) purely to
+  // animate a "thinking…" indicator while one is generating a reply.
+  const spawnedSeats = useRef<AgentSeat[]>([]);
+  const [thinking, setThinking] = useState<Set<string>>(new Set());
+  const [spinTick, setSpinTick] = useState(0);
+  useEffect(() => {
+    if (thinking.size === 0) return;
+    const t = setInterval(() => setSpinTick((n) => n + 1), 90);
+    return () => clearInterval(t);
+  }, [thinking.size]);
+  const SPIN_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
   // Message viewport: terminal rows, and how far scrolled up from the newest.
   const { stdout } = useStdout();
@@ -158,8 +190,85 @@ function App({ client, resolver }: { client: RoomClient; resolver?: MergeResolve
             )
             .catch((e) => setNotice(e instanceof Error ? e.message : String(e)));
         }
+      } else if (cmd === "agent") {
+        const [handle, ...flagArgs] = args;
+        if (!handle) {
+          setNotice("usage: /agent <handle> [--provider <id>] [--model <id>]  ·  providers: " + providers.map((p) => p.id).join(", "));
+        } else {
+          const flags: Record<string, string> = {};
+          for (let i = 0; i < flagArgs.length; i++) if (flagArgs[i].startsWith("--")) flags[flagArgs[i].slice(2)] = flagArgs[++i] ?? "";
+          const providerId = flags.provider ?? "anthropic";
+          const model = flags.model;
+          const provider = getProvider(providerId);
+          if (!provider) {
+            setNotice(`unknown provider "${providerId}" — providers: ${providers.map((p) => p.id).join(", ")}`);
+          } else {
+            const creds = loadCredentials(provider);
+            const missing = missingRequired(provider, creds);
+            if (missing.length) {
+              setNotice(`${provider.id} needs ${missing.join(", ")} — set it with /key ${provider.id} <value>, then /agent again`);
+            } else {
+              setNotice(`checking ${provider.label} credentials…`);
+              testProvider(provider, creds).then((check) => {
+                if (!check.ok) {
+                  setNotice(`✗ ${provider.label}: ${check.message} — fix with /key ${provider.id} <value>`);
+                  return;
+                }
+                const seat = spawnAgent({
+                  relayUrl: client.url,
+                  room: client.room,
+                  handle,
+                  key: client.key,
+                  providerId,
+                  model,
+                  onThinking: (h) => setThinking((s) => new Set(s).add(h)),
+                  onReply: (h) =>
+                    setThinking((s) => {
+                      if (!s.has(h)) return s;
+                      const next = new Set(s);
+                      next.delete(h);
+                      return next;
+                    }),
+                  onError: (h, e) => {
+                    setThinking((s) => {
+                      if (!s.has(h)) return s;
+                      const next = new Set(s);
+                      next.delete(h);
+                      return next;
+                    });
+                    setNotice(`[${h}] ${e.message}`);
+                  },
+                });
+                spawnedSeats.current.push(seat);
+                setNotice(`✓ ${handle} joined via ${providerId}${model ? "/" + model : ""} — mention @${handle} to talk to it`);
+              });
+            }
+          }
+        }
+      } else if (cmd === "key") {
+        const [providerId, ...rest] = args;
+        const provider = providerId ? getProvider(providerId) : undefined;
+        if (!provider) {
+          setNotice(`usage: /key <provider> <value>  ·  providers: ${providers.map((p) => p.id).join(", ")}`);
+        } else {
+          const named = provider.credentials.find((c) => c.key === rest[0]);
+          const credKey = named?.key ?? provider.credentials.find((c) => c.required && c.secret)?.key ?? provider.credentials.find((c) => c.required)?.key;
+          const value = (named ? rest.slice(1) : rest).join(" ");
+          if (!credKey) {
+            setNotice(`${provider.id} has no configurable credential`);
+          } else if (!value) {
+            setNotice(`usage: /key ${provider.id} <value>`);
+          } else {
+            const store = loadStore();
+            store[credKey] = value;
+            saveStore(store);
+            setNotice(`saved ${credKey} for ${provider.label} — try /agent <handle> --provider ${provider.id}`);
+          }
+        }
       } else if (cmd === "help") {
-        setNotice("/fork [names] · /set <branch> <key> <value> · /merge <a> <b>");
+        setNotice(
+          "/fork [names] · /set <branch> <key> <value> · /merge <a> <b> · /agent <handle> [--provider <id>] [--model <id>] · /key <provider> <value>",
+        );
       } else {
         setNotice(`unknown command: /${cmd}`);
       }
@@ -196,6 +305,7 @@ function App({ client, resolver }: { client: RoomClient; resolver?: MergeResolve
       return;
     }
     if (key.escape) {
+      for (const seat of spawnedSeats.current) seat.close();
       client.close();
       app.exit();
       return;
@@ -237,15 +347,23 @@ function App({ client, resolver }: { client: RoomClient; resolver?: MergeResolve
             {status === "online" ? "●" : "○"}{" "}
           </Text>
           <Text color="gray">
-            {status === "denied"
-              ? "denied"
-              : status === "reconnecting"
-                ? "reconnecting…"
-                : status === "connecting"
-                  ? "connecting…"
-                  : participants.length
-                    ? participants.join(", ")
-                    : "…"}
+            {status === "denied" ? (
+              "denied"
+            ) : status === "reconnecting" ? (
+              "reconnecting…"
+            ) : status === "connecting" ? (
+              "connecting…"
+            ) : participants.length ? (
+              participants.map((p, i) => (
+                <Text key={p}>
+                  {i > 0 && ", "}
+                  {p}
+                  {thinking.has(p) && <Text color="blueBright"> {SPIN_FRAMES[spinTick % SPIN_FRAMES.length]}</Text>}
+                </Text>
+              ))
+            ) : (
+              "…"
+            )}
           </Text>
         </Text>
       </Box>
@@ -277,11 +395,18 @@ function App({ client, resolver }: { client: RoomClient; resolver?: MergeResolve
       <Text color="yellow">{notice || " "}</Text>
       <Box borderStyle="round" borderColor="gray" paddingX={1}>
         <Text color={colorFor(client.handle)}>{client.handle} ▸ </Text>
-        <Text>{line.value.slice(0, line.cursor)}</Text>
-        <Text inverse>{line.value[line.cursor] ?? " "}</Text>
-        <Text>{line.value.slice(line.cursor + 1)}</Text>
+        {(() => {
+          const display = maskForDisplay(line.value); // masks a /key secret on screen only
+          return (
+            <>
+              <Text>{display.slice(0, line.cursor)}</Text>
+              <Text inverse>{display[line.cursor] ?? " "}</Text>
+              <Text>{display.slice(line.cursor + 1)}</Text>
+            </>
+          );
+        })()}
       </Box>
-      <Text color="gray"> enter: send · ↑↓ history · ←→ move · PgUp/PgDn scroll · esc: quit</Text>
+      <Text color="gray"> enter: send · ↑↓ history · ←→ move · PgUp/PgDn scroll · esc: quit · /agent to add an AI · /help</Text>
     </Box>
   );
 }

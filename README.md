@@ -16,7 +16,7 @@ up whichever providers you want.
 > npm so friends install it in one line. Rooms are **secure by default** — one
 > shared key both gates joins and end-to-end encrypts the traffic, so the relay
 > is a zero-knowledge mailbox — and clients **auto-reconnect** through drops.
-> 108 tests across 16 suites. Plan and
+> 135 tests across 18 suites. Plan and
 > architecture live in the sibling repo —
 > [`multiplayer-ai/ROADMAP.md`](https://github.com/schady4/multiplayer-ai/blob/main/ROADMAP.md)
 > ([tracking epic](https://github.com/schady4/multiplayer-ai/issues/8)).
@@ -193,6 +193,41 @@ but only if a seat with a provider is present (join with `--provider` to let
 your seat arbitrate). The resolved values ride inside the merge op, so every
 replica lands on the same trunk. The ledger panel shows trunk, branches, and
 recent history live.
+
+## Build on the bus (the SDK)
+
+Under the terminal UI, Quorum's core is a **headless conversation bus** — a
+relay plus an end-to-end-encrypted, provenance-carrying, converged log. It's the
+package's library entry (no Ink/React pulled in), so a desktop or mobile surface,
+a bridge into Slack / Discord / Twitch, or an external agent are all just **seats
+on the same bus**:
+
+```ts
+import { startRelay, RoomClient, AgentSeat, createModelResponder } from "@schady4/quorum";
+
+// host a room (or point a client at someone else's relay)
+const relay = await startRelay({ port: 8787, authToken });
+
+// join as a seat — the primitive every surface and bridge is built from
+const room = new RoomClient("ws://localhost:8787", "lobby", "ada", roomKey);
+room.on("update", (entries) => render(entries)); // your UI, or a bridge sink
+room.connect();
+room.send("hello from anywhere");
+
+// seat an agent (any Responder — a model, or a bridge to an external agent)
+new AgentSeat({
+  relayUrl: "ws://localhost:8787",
+  room: "lobby",
+  handle: "claude",
+  key: roomKey,
+  respond: createModelResponder({ providerId: "anthropic" }),
+}).start();
+```
+
+The wire contract is documented in [PROTOCOL.md](PROTOCOL.md): anything that
+speaks it and holds the room key is a first-class participant, indistinguishable
+on the bus from any other. That's the whole basis for a universal conversation
+pipeline instead of another silo.
 
 ## Adding a model provider
 

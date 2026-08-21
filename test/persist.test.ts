@@ -5,7 +5,7 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { encodeSave, decodeSave, framesFrom, sessionFromClient, type Session } from "../src/session/qdag.js";
+import { encodeSave, decodeSave, writeSave, framesFrom, streamFrames, sessionFromClient, type Session } from "../src/session/qdag.js";
 import { MemoryRoomStore, FileRoomStore } from "../src/session/store.js";
 import { createSurface } from "../src/core/crdt.js";
 import { Ledger } from "../src/core/ledger.js";
@@ -69,8 +69,13 @@ function main(): void {
   check("a sealed bond rejects the wrong key", wrongKeyThrew);
 
   // --- sealed at rest: the wire/relay/disk never sees plaintext -------------
-  const env = JSON.parse(sealed) as { sealed: boolean; body: string };
-  check("sealed bond is encrypted at rest", env.sealed && env.body.startsWith("e1:") && !sealed.includes("plan the launch"));
+  const sealedLines = sealed.split("\n");
+  const man = JSON.parse(sealedLines[0]) as { sealed: boolean; ledger: string; roster: string[] };
+  const chunk0 = JSON.parse(sealedLines[1]) as { body: string };
+  check(
+    "sealed bond is encrypted at rest (manifest ledger + chunks)",
+    man.sealed && man.ledger.startsWith("e1:") && chunk0.body.startsWith("e1:") && !sealed.includes("plan the launch"),
+  );
 
   // --- DAG fidelity: the merge (provenance + resolution) survives -----------
   const back = decodeSave(encodeSave(session));
@@ -102,6 +107,33 @@ function main(): void {
   const bond = encodeSave(big);
   const liveLog = JSON.stringify(framesFrom(big).ops); // the fat op frames (ids + after + author)
   check("a bond is well under half the live op log", bond.length * 2 < liveLog.length, `bond=${bond.length} live=${liveLog.length}`);
+
+  // --- chunking: a large session splits, streams, and stays whole ----------
+  const chunkLines: string[] = [];
+  writeSave(big, (l) => chunkLines.push(l), { maxChunkBytes: 200 });
+  check("a large session splits into many chunks", chunkLines.length - 1 > 1, `chunks=${chunkLines.length - 1}`);
+  check("a chunked save round-trips", eq(decodeSave(chunkLines.join("\n")).messages, big.messages));
+
+  const streamed: { author: string; text: string }[] = [];
+  let streamedLedger = 0;
+  streamFrames(chunkLines, {}, (f) => {
+    if (f.ledgerOps) streamedLedger = f.ledgerOps.length;
+    for (const op of f.ops ?? []) streamed.push({ author: op.author, text: op.value });
+  });
+  check("streamFrames rebuilds every message chunk-by-chunk", eq(streamed, big.messages) && streamedLedger === big.ledger.length);
+
+  // --- integrity: a tampered chunk is caught -------------------------------
+  const tampered = [...chunkLines];
+  const c1 = JSON.parse(tampered[1]) as { body: string };
+  c1.body = c1.body + "x"; // corrupt one chunk
+  tampered[1] = JSON.stringify(c1);
+  let integrityCaught = false;
+  try {
+    decodeSave(tampered.join("\n"));
+  } catch {
+    integrityCaught = true;
+  }
+  check("a tampered chunk fails the integrity check", integrityCaught);
 
   // --- sessionFromClient materializes from a client-shaped source ----------
   const src = {

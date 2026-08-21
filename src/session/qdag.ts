@@ -1,22 +1,35 @@
 // The bond — a portable, revivable save of a room's DAG. It binds the roster
 // and the complete decision-DAG (branches, merges, provenance) together with the
-// message thread, small enough to hand around, and end-to-end sealed so only
-// someone with the room key can open it.
+// message thread, end-to-end sealed so only someone with the room key can open
+// it.
 //
-// Why it's small: a *live* room is an op log fat with CRDT plumbing (op ids,
-// causal `after` pointers, clientId prefixes) that exists only to let concurrent
-// edits converge. A *finished* save has nothing left to merge against, so we
-// keep only the materialized result — messages in converged order + the
-// replayable ledger-op sequence (which reconstructs the exact branch/merge DAG)
-// — then intern repeated strings, gzip, and seal once. Reviving reassigns fresh
-// ids, so a decoded bond replays cleanly onto a new room.
+// Chunked by design, so a huge session (AI seats generate volume) never has to
+// be gzipped, sealed, or loaded in one shot. The save is NDJSON:
+//
+//   line 1   manifest  { magic, room, created, sealed, roster, ledger }
+//   line 2…  chunks    { i, n, hash, body }   each an independently sealed,
+//                                             integrity-hashed slice of messages
+//
+// The decision-DAG (ledger) is tiny and lives whole in the manifest; only the
+// unbounded message stream is chunked. Encode streams a chunk at a time, decode
+// verifies + opens a chunk at a time, revive replays a chunk at a time — peak
+// memory is one chunk regardless of total size.
+//
+// Why a save is small: a live room's op log is fat with CRDT plumbing (op ids,
+// causal `after` pointers, clientId prefixes) that exists only so concurrent
+// edits converge. A finished save has nothing to merge against, so we keep only
+// the materialized result — messages in converged order + the replayable ledger
+// ops (which reconstruct the exact branch/merge DAG) — gzip each chunk, seal it.
+// Reviving reassigns fresh ids, so a decoded bond replays cleanly onto a new room.
 
 import { gzipSync, gunzipSync } from "node:zlib";
+import { createHash } from "node:crypto";
 import { roomCrypto } from "../net/crypto.js";
 import { ROOT, type Entry, type InsertOp } from "../core/crdt.js";
 import type { LedgerOp } from "../core/ledger.js";
 
-const MAGIC = "QDAG1";
+const MAGIC = "QDAG2";
+const DEFAULT_CHUNK_BYTES = 4 * 1024 * 1024; // ~4 MB of message text per chunk
 
 /** A ledger op without its id — ids are live-only and reassigned on revive. */
 export type LedgerOpBody =
@@ -34,6 +47,13 @@ export interface Session {
   messages: { author: string; text: string }[];
   /** The replayable decision-DAG history (ids stripped). */
   ledger: LedgerOpBody[];
+}
+
+export interface SaveOptions {
+  /** Room secret; when set, the ledger and every chunk are sealed at rest. */
+  key?: string;
+  /** Max plaintext bytes of messages per chunk (default ~4 MB). */
+  maxChunkBytes?: number;
 }
 
 /** Anything shaped like a joined RoomClient — duck-typed so this module never
@@ -60,95 +80,113 @@ export function sessionFromClient(src: SessionSource): Session {
   };
 }
 
-// --- compact (interned + columnar) representation ----------------------------
+// --- container primitives ----------------------------------------------------
 
-interface Compact {
-  v: 1;
+interface Manifest {
+  magic: string;
   room: string;
   created: number;
-  dict: string[];
-  roster: number[];
-  msgs: [number, string][]; // [authorIdx, text]
-  led: unknown[];
+  sealed: boolean;
+  roster: string[];
+  ledger: string; // packed body of the ledger ops
+}
+interface Chunk {
+  i: number;
+  n: number;
+  hash: string;
+  body: string;
 }
 
-function compact(session: Session): Compact {
-  const dict: string[] = [];
-  const idx = (s: string): number => {
-    let i = dict.indexOf(s);
-    if (i < 0) {
-      i = dict.length;
-      dict.push(s);
+/** Pack raw bytes for storage: gzip, base64, and (when keyed) AES-256-GCM seal. */
+function packBody(raw: Buffer, sealed: boolean, key: string | undefined, room: string): string {
+  const gzB64 = gzipSync(raw).toString("base64");
+  return sealed ? roomCrypto(key as string, room).enc(gzB64) : gzB64;
+}
+/** The inverse of packBody. */
+function unpackBody(body: string, sealed: boolean, key: string | undefined, room: string): Buffer {
+  const gzB64 = sealed ? roomCrypto(key as string, room).dec(body) : body;
+  return gunzipSync(Buffer.from(gzB64, "base64"));
+}
+function hash16(s: string): string {
+  return createHash("sha256").update(s).digest("hex").slice(0, 16);
+}
+
+/** Split messages into byte-bounded slices without materializing all of them. */
+function* chunkMessages(messages: Iterable<{ author: string; text: string }>, maxBytes: number): Generator<{ author: string; text: string }[]> {
+  let buf: { author: string; text: string }[] = [];
+  let size = 0;
+  for (const m of messages) {
+    const s = m.author.length + m.text.length + 8;
+    if (buf.length && size + s > maxBytes) {
+      yield buf;
+      buf = [];
+      size = 0;
     }
-    return i;
-  };
-  const roster = session.roster.map(idx);
-  const msgs = session.messages.map((m) => [idx(m.author), m.text] as [number, string]);
-  const led = session.ledger.map((op) => {
-    if (op.type === "fork") return [0, op.branches.map(idx)];
-    if (op.type === "edit") return [1, idx(op.branch), idx(op.key), op.value, idx(op.author)];
-    const resolved = Object.entries(op.resolved).map(([k, v]) => [idx(k), v]);
-    return [2, [idx(op.branches[0]), idx(op.branches[1])], resolved, idx(op.author), op.viaArbitration ? 1 : 0, op.rationale ?? null];
-  });
-  return { v: 1, room: session.room, created: session.created, dict, roster, msgs, led };
+    buf.push(m);
+    size += s;
+  }
+  if (buf.length) yield buf;
 }
 
-function expand(c: Compact): Session {
-  const d = c.dict;
-  const ledger: LedgerOpBody[] = c.led.map((raw) => {
-    const a = raw as unknown[];
-    const kind = a[0] as number;
-    if (kind === 0) return { type: "fork", branches: (a[1] as number[]).map((i) => d[i]) };
-    if (kind === 1) return { type: "edit", branch: d[a[1] as number], key: d[a[2] as number], value: a[3] as string, author: d[a[4] as number] };
-    const [ai, bi] = a[1] as [number, number];
-    const resolved: Record<string, string> = {};
-    for (const [ki, v] of a[2] as [number, string][]) resolved[d[ki]] = v;
-    const rationale = a[5] as string | null;
-    return {
-      type: "merge",
-      branches: [d[ai], d[bi]],
-      resolved,
-      author: d[a[3] as number],
-      viaArbitration: a[4] === 1,
-      ...(rationale != null ? { rationale } : {}),
-    };
-  });
-  return {
-    room: c.room,
-    created: c.created,
-    roster: c.roster.map((i) => d[i]),
-    messages: c.msgs.map(([ai, t]) => ({ author: d[ai], text: t })),
-    ledger,
-  };
-}
+// --- encode ------------------------------------------------------------------
 
-// --- the on-disk container (a portable JSON envelope) ------------------------
-
-/** Encode a session to a `.qdag` save. With `key`, the body is gzipped then
- *  AES-256-GCM sealed — encrypted at rest, openable only with the room key. */
-export function encodeSave(session: Session, key?: string): string {
-  const gzB64 = gzipSync(Buffer.from(JSON.stringify(compact(session)), "utf8")).toString("base64");
+/** Stream a session out as NDJSON lines (one chunk sealed at a time). Point
+ *  `emit` at a file/stream to save arbitrarily large sessions in bounded memory. */
+export function writeSave(session: Session, emit: (line: string) => void, opts: SaveOptions = {}): void {
+  const { key, maxChunkBytes = DEFAULT_CHUNK_BYTES } = opts;
   const sealed = key != null && key !== "";
-  const body = sealed ? roomCrypto(key, session.room).enc(gzB64) : gzB64;
-  return JSON.stringify({ magic: MAGIC, room: session.room, created: session.created, sealed, body });
+  const room = session.room;
+  const ledger = packBody(Buffer.from(JSON.stringify(session.ledger), "utf8"), sealed, key, room);
+  const manifest: Manifest = { magic: MAGIC, room, created: session.created, sealed, roster: session.roster, ledger };
+  emit(JSON.stringify(manifest));
+  let i = 0;
+  for (const slice of chunkMessages(session.messages, maxChunkBytes)) {
+    const raw = Buffer.from(JSON.stringify(slice.map((m) => [m.author, m.text])), "utf8");
+    const body = packBody(raw, sealed, key, room);
+    const chunk: Chunk = { i: i++, n: slice.length, hash: hash16(body), body };
+    emit(JSON.stringify(chunk));
+  }
 }
 
-/** Decode a `.qdag` save. A sealed save needs the room key. */
+/** Encode a session to a `.qdag` save string. Convenience over `writeSave` for
+ *  saves that fit in memory; for very large sessions stream `writeSave` to a file. */
+export function encodeSave(session: Session, key?: string): string {
+  const lines: string[] = [];
+  writeSave(session, (l) => lines.push(l), { key });
+  return lines.join("\n");
+}
+
+// --- decode ------------------------------------------------------------------
+
+function parseManifest(line: string, key?: string): Manifest {
+  const man = JSON.parse(line) as Manifest;
+  if (man.magic !== MAGIC) throw new Error("not a Quorum save (bad magic)");
+  if (man.sealed && (key == null || key === "")) throw new Error("this save is encrypted — provide the room key to open it");
+  return man;
+}
+
+/** Decode a whole `.qdag` save into a Session. For very large saves prefer
+ *  `streamFrames`, which never holds more than one chunk. */
 export function decodeSave(file: string, key?: string): Session {
-  const env = JSON.parse(file) as { magic: string; room: string; sealed: boolean; body: string };
-  if (env.magic !== MAGIC) throw new Error("not a Quorum save (bad magic)");
-  if (env.sealed && (key == null || key === "")) throw new Error("this save is encrypted — provide the room key to open it");
-  const gzB64 = env.sealed ? roomCrypto(key as string, env.room).dec(env.body) : env.body;
-  const c = JSON.parse(gunzipSync(Buffer.from(gzB64, "base64")).toString("utf8")) as Compact;
-  return expand(c);
+  const lines = file.split("\n").filter((l) => l.length > 0);
+  if (lines.length === 0) throw new Error("empty save");
+  const man = parseManifest(lines[0], key);
+  const ledger = JSON.parse(unpackBody(man.ledger, man.sealed, key, man.room).toString("utf8")) as LedgerOpBody[];
+  const messages: { author: string; text: string }[] = [];
+  for (let li = 1; li < lines.length; li++) {
+    const c = JSON.parse(lines[li]) as Chunk;
+    if (hash16(c.body) !== c.hash) throw new Error(`save chunk ${c.i} failed its integrity check`);
+    const slice = JSON.parse(unpackBody(c.body, man.sealed, key, man.room).toString("utf8")) as [string, string][];
+    for (const [a, t] of slice) messages.push({ author: a, text: t });
+  }
+  return { room: man.room, created: man.created, roster: man.roster, messages, ledger };
 }
 
-// --- revival: regenerate live frames from a decoded session ------------------
+// --- revive ------------------------------------------------------------------
 
-/** Rebuild op frames from a session, with fresh ids, so a bond can be replayed
- *  onto a new room. Messages keep their original authors (that's the point of a
- *  bond); the ledger DAG replays in order. `site` namespaces the fresh ids so a
- *  revive never collides with another. */
+/** Rebuild op frames from an in-memory session, with fresh ids, so a bond can be
+ *  replayed onto a new room. Messages keep their original authors; the ledger
+ *  DAG replays in order. `site` namespaces the fresh ids so revives never clash. */
 export function framesFrom(session: Session, site = "revive"): { ops: InsertOp[]; ledgerOps: LedgerOp[] } {
   const ops: InsertOp[] = [];
   let after = ROOT;
@@ -159,4 +197,32 @@ export function framesFrom(session: Session, site = "revive"): { ops: InsertOp[]
   });
   const ledgerOps = session.ledger.map((body, i) => ({ ...body, id: `${site}L:${i + 1}` }) as LedgerOp);
   return { ops, ledgerOps };
+}
+
+/** Stream revival frames from a `.qdag` save's lines, one chunk at a time —
+ *  bounded memory for any size. `emit` is called with the ledger frames once,
+ *  then with a batch of message ops per chunk, in order. */
+export function streamFrames(lines: Iterable<string>, opts: { key?: string } = {}, emit: (frames: { ops?: InsertOp[]; ledgerOps?: LedgerOp[] }) => void, site = "revive"): void {
+  const it = lines[Symbol.iterator]();
+  const first = it.next();
+  if (first.done) throw new Error("empty save");
+  const man = parseManifest(first.value, opts.key);
+  const ledger = JSON.parse(unpackBody(man.ledger, man.sealed, opts.key, man.room).toString("utf8")) as LedgerOpBody[];
+  emit({ ledgerOps: ledger.map((body, i) => ({ ...body, id: `${site}L:${i + 1}` }) as LedgerOp) });
+
+  let after = ROOT;
+  let n = 0;
+  for (let r = it.next(); !r.done; r = it.next()) {
+    if (!r.value) continue;
+    const c = JSON.parse(r.value) as Chunk;
+    if (hash16(c.body) !== c.hash) throw new Error(`save chunk ${c.i} failed its integrity check`);
+    const slice = JSON.parse(unpackBody(c.body, man.sealed, opts.key, man.room).toString("utf8")) as [string, string][];
+    const ops: InsertOp[] = [];
+    for (const [a, t] of slice) {
+      const id = `${site}:${++n}`;
+      ops.push({ type: "insert", id, after, value: t, author: a });
+      after = id;
+    }
+    emit({ ops });
+  }
 }

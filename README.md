@@ -16,7 +16,7 @@ up whichever providers you want.
 > npm so friends install it in one line. Rooms are **secure by default** — one
 > shared key both gates joins and end-to-end encrypts the traffic, so the relay
 > is a zero-knowledge mailbox — and clients **auto-reconnect** through drops.
-> 148 tests across 19 suites. Plan and
+> 152 tests across 19 suites. Plan and
 > architecture live in the sibling repo —
 > [`multiplayer-ai/ROADMAP.md`](https://github.com/schady4/multiplayer-ai/blob/main/ROADMAP.md)
 > ([tracking epic](https://github.com/schady4/multiplayer-ai/issues/8)).

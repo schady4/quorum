@@ -18,44 +18,53 @@ materialized result and drops the plumbing:
 
 - messages in **converged order** (`[author, text]`), no ids/pointers;
 - the **ledger op sequence** (fork/edit/merge), which replays to the exact
-  branch/merge DAG — with ids dropped (reassigned on revive);
-- content hashes are **recomputed** on load, not stored.
+  branch/merge DAG — with ids dropped (reassigned on revive).
 
-What remains is interned (repeated authors, branch names, keys → a string
-dictionary referenced by index), then gzipped, then sealed once.
+Each chunk is gzipped and sealed; gzip dedupes the repeated authors within it.
 
-### Container
+### Container — chunked NDJSON
 
-A `.qdag` file is a portable JSON envelope:
+A `.qdag` file is newline-delimited JSON so it **streams**: read/write a line at
+a time, never the whole file. The decision-DAG (ledger) is tiny and lives whole
+in the manifest; only the unbounded **message stream** is chunked.
 
-```json
-{ "magic": "QDAG1", "room": "lobby", "created": 1700000000000,
-  "sealed": true, "body": "e1:<base64 AES-256-GCM>" }
+```
+line 1  manifest  { "magic":"QDAG2", "room", "created", "sealed", "roster":[…], "ledger": "<body>" }
+line 2… chunk     { "i":0, "n":<count>, "hash":"<sha256/16>", "body": "<body>" }
 ```
 
-- `body` is `base64(gzip(compact))`, and when `sealed`, that string is then
-  AES-256-GCM sealed with the room key (`e1:` prefix — same scheme as the wire).
-- `compact` is the interned/columnar form: `{ v, room, created, dict[], roster[],
-  msgs: [authorIdx, text][], led: <compact ledger ops> }`.
+- `<body>` = `base64(gzip(payload))`, then, when `sealed`, AES-256-GCM sealed
+  with the room key (`e1:` prefix — same scheme as the wire). The manifest's
+  `ledger` body wraps the ledger ops; each chunk body wraps a slice of
+  `[author, text]` messages.
+- `roster`, `room`, `created` are plaintext metadata; the conversation and the
+  decision values are only inside sealed `body` fields. A sealed bond can't be
+  opened without the key.
+- Each chunk carries a `hash` of its `body`; decode verifies it and rejects a
+  tampered or truncated chunk.
 
-Metadata (`room`, `created`, `sealed`) is plaintext in the envelope; the
-conversation is only inside `body`. A sealed bond can't be opened without the
-key.
+**Bounded memory at every step.** Encode seals one chunk at a time; decode/revive
+opens one chunk at a time. A gigabyte-class session never gzips, seals, or loads
+as a single blob. A small chat is just `manifest + one chunk`. Chunks are also
+the natural unit for feeding history back to a model within a context window.
 
 ### Revive ("bond it back")
 
-`framesFrom(session)` regenerates op frames with **fresh ids** and a linear
-`after`-chain for messages (original authors preserved) and fresh ledger-op
-ids. Replaying those onto a new room reconstructs the same messages and the same
-decision-DAG — the room is live again, and other members converge on it when
-they rejoin. The room key gates revival: you need it to decode a sealed bond,
-and the people who were on the DAG are exactly the people who had it.
+`framesFrom(session)` (in-memory) or `streamFrames(lines, …)` (bounded memory)
+regenerate op frames with **fresh ids** — a linear `after`-chain for messages
+(original authors preserved) and fresh ledger-op ids. Replaying those onto a new
+room reconstructs the same messages and the same decision-DAG; the room is live
+again, and other members converge when they rejoin. The room key gates revival:
+you need it to open a sealed bond, and the people who were on the DAG are exactly
+the people who had it.
 
 ### API
 
-`encodeSave(session, key?) -> string` · `decodeSave(file, key?) -> Session` ·
-`framesFrom(session) -> { ops, ledgerOps }` · `sessionFromClient(client) ->
-Session`. Exported from `@schady4/quorum`.
+`encodeSave(session, key?) -> string` and `decodeSave(file, key?) -> Session`
+(whole, for saves that fit in memory) · `writeSave(session, emit, opts)` and
+`streamFrames(lines, opts, emit)` (streaming, for any size) · `framesFrom(session)`
+· `sessionFromClient(client)`. `opts.maxChunkBytes` tunes the chunk size
+(default ~4 MB). All exported from `@schady4/quorum`.
 
 ## The `RoomStore` — continuous per-client durability
 

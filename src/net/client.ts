@@ -38,6 +38,11 @@ export class RoomClient extends EventEmitter {
   readonly clientId = newClientId();
   private surface: CrdtSurface = createSurface();
   readonly ledger = new Ledger();
+  /** Decrypted ledger ops in apply order — the replayable decision-DAG history,
+   *  which the live Ledger (a materialized view) doesn't keep. Used to persist
+   *  and to serialize a session for a save. Deduped by op id. */
+  private ledgerLog: LedgerOp[] = [];
+  private ledgerSeen = new Set<string>();
   /** Durable seat progress: seat handle -> the chat entry ids it has handled. */
   private checkpoints = new Map<string, Set<string>>();
   /** End-to-end crypto derived from the room secret; identity for an open room. */
@@ -136,7 +141,7 @@ export class RoomClient extends EventEmitter {
       const msg = decode(data.toString());
       if (msg.t === "welcome") {
         for (const op of msg.ops) this.surface.apply(op);
-        for (const op of msg.ledgerOps) this.ledger.apply(this.decLedger(op));
+        for (const op of msg.ledgerOps) this.applyLedgerLocal(this.decLedger(op));
         // Seed progress before the first update fires, so a rejoining seat knows
         // what it already handled before it decides what to answer.
         for (const op of msg.checkpointOps ?? []) this.applyCheckpoint(op);
@@ -148,7 +153,7 @@ export class RoomClient extends EventEmitter {
         this.surface.apply(msg.op);
         this.emit("update", this.viewEntries());
       } else if (msg.t === "ledger") {
-        this.ledger.apply(this.decLedger(msg.op));
+        this.applyLedgerLocal(this.decLedger(msg.op));
         this.emit("ledger", this.ledger);
       } else if (msg.t === "checkpoint") {
         this.applyCheckpoint(msg.op);
@@ -272,9 +277,25 @@ export class RoomClient extends EventEmitter {
   }
 
   private sendLedger(op: LedgerOp): void {
-    this.ledger.apply(op); // the local Ledger holds plaintext
+    this.applyLedgerLocal(op); // the local Ledger + log hold plaintext
     this.emit("ledger", this.ledger);
     if (this.live) this.ws!.send(encode({ t: "ledger", op: this.encLedger(op) })); // wire holds ciphertext
+  }
+
+  /** Apply a plaintext ledger op to the live Ledger and record it in the
+   *  replayable log (deduped), so the decision-DAG history can be saved/revived. */
+  private applyLedgerLocal(op: LedgerOp): void {
+    if (!this.ledgerSeen.has(op.id)) {
+      this.ledgerSeen.add(op.id);
+      this.ledgerLog.push(op);
+    }
+    this.ledger.apply(op);
+  }
+
+  /** The decrypted decision-DAG history in apply order — replay it to rebuild
+   *  the ledger. The bond/save serializes this; the store persists it. */
+  ledgerOps(): LedgerOp[] {
+    return [...this.ledgerLog];
   }
 
   /** Fork the trunk decision-state into named branches. */

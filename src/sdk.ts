@@ -81,3 +81,9 @@ export type {
 
 // --- Credentials: resolve provider keys from env + local store ---------------
 export { loadCredentials, missingRequired } from "./config/credentials.js";
+
+// --- Session persistence: a durable store + portable, revivable saves --------
+export { MemoryRoomStore, FileRoomStore } from "./session/store.js";
+export type { RoomStore, StoredFrame, StoredKind } from "./session/store.js";
+export { encodeSave, decodeSave, framesFrom, sessionFromClient } from "./session/qdag.js";
+export type { Session, LedgerOpBody, SessionSource } from "./session/qdag.js";

@@ -16,7 +16,7 @@ up whichever providers you want.
 > npm so friends install it in one line. Rooms are **secure by default** — one
 > shared key both gates joins and end-to-end encrypts the traffic, so the relay
 > is a zero-knowledge mailbox — and clients **auto-reconnect** through drops.
-> 135 tests across 18 suites. Plan and
+> 148 tests across 19 suites. Plan and
 > architecture live in the sibling repo —
 > [`multiplayer-ai/ROADMAP.md`](https://github.com/schady4/multiplayer-ai/blob/main/ROADMAP.md)
 > ([tracking epic](https://github.com/schady4/multiplayer-ai/issues/8)).
@@ -228,6 +228,25 @@ The wire contract is documented in [PROTOCOL.md](PROTOCOL.md): anything that
 speaks it and holds the room key is a first-class participant, indistinguishable
 on the bus from any other. That's the whole basis for a universal conversation
 pipeline instead of another silo.
+
+## Saving & reviving sessions
+
+Two storage mechanisms sit on the same op-log substrate (details in
+[SAVE-FORMAT.md](SAVE-FORMAT.md)), both encrypted at rest with the room key:
+
+- **`RoomStore`** — continuous per-client durability. A client that holds a
+  store keeps every (sealed) frame it sees, so it survives restarts and can push
+  its log back to **re-seed a relay** that lost its memory. Any client becomes a
+  backup — no server database needed.
+- **The `.qdag` bond** — a small, portable, *revivable* save. It binds the
+  roster and the complete decision-DAG (branches, merges, provenance) with the
+  message thread; anyone holding the file **and the room key** can revive it into
+  a live room. Small because a finished save drops the live-only CRDT plumbing
+  and keeps just the replayable result, interned + gzipped + sealed.
+
+Both are exported from the SDK today (`RoomStore`/`FileRoomStore`,
+`encodeSave`/`decodeSave`/`framesFrom`); the in-chat UX — a save prompt for the
+last person out, and a revive command — is the next slice.
 
 ## Adding a model provider
 

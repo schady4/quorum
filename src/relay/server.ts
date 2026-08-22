@@ -4,11 +4,14 @@
 // replica, not something the server computes. Run your own, or point at a
 // shared one.
 
-import { WebSocketServer, WebSocket, type AddressInfo } from "ws";
+import http from "node:http";
+import { WebSocketServer, WebSocket } from "ws";
 import type { Op } from "../core/crdt.js";
 import type { LedgerOp } from "../core/ledger.js";
 import { decode, encode, type CheckpointOp, type ServerMsg } from "../net/protocol.js";
 import { authMatches } from "../net/crypto.js";
+import { AUTH_HEADER } from "../net/blob.js";
+import { expoPushSender, looksLikeExpoToken, type PushSender, type PushMessage } from "../net/push.js";
 
 /** What the relay tracks per connected socket. */
 interface Member {
@@ -32,6 +35,19 @@ interface Room {
   checkpointSeen: Set<string>;
   /** Connected sockets and who each is. */
   clients: Map<WebSocket, Member>;
+  /** The blob store: sealed (opaque) attachment bytes, keyed by content hash.
+   *  The relay can't read them — same zero-knowledge property as the op log. */
+  blobs: Map<string, Uint8Array>;
+  /** Running total of stored blob bytes, so a room can be capped. */
+  blobBytes: number;
+  /** Device push tokens by handle, kept across disconnects so an offline member
+   *  can be notified of new messages. Metadata only — never content. */
+  pushTokens: Map<string, Set<string>>;
+  /** Per-handle last-push time, to rate-limit notifications. */
+  pushCooldown: Map<string, number>;
+  /** Handles that muted this room — skipped by offline-notify. Kept across
+   *  reconnects, so a mute holds even when the app is closed. */
+  muted: Set<string>;
 }
 
 export interface RelayHandle {
@@ -51,6 +67,20 @@ export interface RelayOptions {
   heartbeatMs?: number;
   /** Log connections/joins to stderr. Off in tests. */
   verbose?: boolean;
+  /** Max bytes for a single blob attachment. Default 25 MB. */
+  maxBlobBytes?: number;
+  /** Max total blob bytes retained per room. Default 256 MB. */
+  maxRoomBlobBytes?: number;
+  /** Push notifications for disconnected members. On by default; set false to
+   *  disable outbound push entirely. */
+  push?: boolean;
+  /** Override the push delivery (default posts to Expo). Injectable for tests or
+   *  an alternate gateway. */
+  sendPush?: PushSender;
+  /** Endpoint for the default (Expo) push sender. */
+  pushEndpoint?: string;
+  /** Minimum ms between pushes to one handle in a room. Default 10s. */
+  pushCooldownMs?: number;
 }
 
 export function startRelay(opts: RelayOptions): Promise<RelayHandle> {
@@ -60,10 +90,35 @@ export function startRelay(opts: RelayOptions): Promise<RelayHandle> {
   const room = (name: string): Room => {
     let r = rooms.get(name);
     if (!r) {
-      r = { ops: [], seen: new Set(), ledgerOps: [], ledgerSeen: new Set(), checkpointOps: [], checkpointSeen: new Set(), clients: new Map() };
+      r = { ops: [], seen: new Set(), ledgerOps: [], ledgerSeen: new Set(), checkpointOps: [], checkpointSeen: new Set(), clients: new Map(), blobs: new Map(), blobBytes: 0, pushTokens: new Map(), pushCooldown: new Map(), muted: new Set() };
       rooms.set(name, r);
     }
     return r;
+  };
+  const maxBlobBytes = opts.maxBlobBytes ?? 25 * 1024 * 1024;
+  const maxRoomBlobBytes = opts.maxRoomBlobBytes ?? 256 * 1024 * 1024;
+
+  // Push delivery for disconnected members. Content-free by construction — the
+  // relay only knows who sent and which room, never what was said.
+  const pushEnabled = opts.push !== false;
+  const pushSender: PushSender = opts.sendPush ?? expoPushSender(opts.pushEndpoint);
+  const pushCooldownMs = opts.pushCooldownMs ?? 10_000;
+
+  const notifyOffline = (r: Room, roomName: string, authorHandle: string): void => {
+    if (!pushEnabled || r.pushTokens.size === 0) return;
+    const online = new Set([...r.clients.values()].map((m) => m.handle));
+    const now = Date.now();
+    const msgs: PushMessage[] = [];
+    for (const [handle, tokens] of r.pushTokens) {
+      if (handle === authorHandle || online.has(handle)) continue; // skip sender + connected
+      if (r.muted.has(handle)) continue; // muted this room
+      if (now - (r.pushCooldown.get(handle) ?? 0) < pushCooldownMs) continue; // rate-limit
+      r.pushCooldown.set(handle, now);
+      for (const to of tokens) {
+        msgs.push({ to, title: roomName, body: `${authorHandle} sent a message`, data: { room: roomName }, sound: "default" });
+      }
+    }
+    if (msgs.length) void pushSender(msgs);
   };
 
   const send = (ws: WebSocket, msg: ServerMsg) => {
@@ -83,9 +138,102 @@ export function startRelay(opts: RelayOptions): Promise<RelayHandle> {
   const alive = new WeakMap<WebSocket, boolean>();
   const isDead = (ws: WebSocket): boolean => alive.get(ws) === false || ws.readyState !== ws.OPEN;
 
+  // --- the blob store, served over HTTP on the same host/port ---------------
+  // GET/PUT /blob/:room/:id. The relay stores only sealed (opaque) bytes keyed
+  // by their content hash; it never decrypts them. Auth is the same room token
+  // that gates the socket, presented in a header.
+  const cors = (res: http.ServerResponse) => {
+    res.setHeader("access-control-allow-origin", "*");
+    res.setHeader("access-control-allow-methods", "GET, PUT, OPTIONS");
+    res.setHeader("access-control-allow-headers", `content-type, ${AUTH_HEADER}`);
+  };
+  const handleHttp = (req: http.IncomingMessage, res: http.ServerResponse): void => {
+    cors(res);
+    if (req.method === "OPTIONS") { res.writeHead(204).end(); return; }
+
+    const path = (req.url ?? "").split("?")[0];
+
+    // GET /rooms/summary?rooms=a,b,c — per-room op count + last activity (metadata
+    // only). Auth-gated by the same room token as the socket.
+    if (req.method === "GET" && path === "/rooms/summary") {
+      if (!authMatches(opts.authToken, req.headers[AUTH_HEADER] as string | undefined)) {
+        res.writeHead(403).end("forbidden");
+        return;
+      }
+      const url = new URL(req.url ?? "", "http://localhost");
+      const names = (url.searchParams.get("rooms") ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+      const out: Record<string, { count: number; lastTs?: number; lastAuthor?: string }> = {};
+      for (const name of names) {
+        const r = rooms.get(name);
+        if (!r) { out[name] = { count: 0 }; continue; }
+        const last = r.ops[r.ops.length - 1];
+        out[name] = {
+          count: r.ops.length,
+          lastTs: last && "ts" in last ? (last as { ts?: number }).ts : undefined,
+          lastAuthor: last && "author" in last ? (last as { author?: string }).author : undefined,
+        };
+      }
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(out));
+      return;
+    }
+
+    const m = /^\/blob\/([^/]+)\/([^/]+)\/?$/.exec(path);
+    if (!m) { res.writeHead(404).end(); return; }
+    if (!authMatches(opts.authToken, req.headers[AUTH_HEADER] as string | undefined)) {
+      res.writeHead(403).end("forbidden");
+      return;
+    }
+    const roomName = decodeURIComponent(m[1]);
+    const id = decodeURIComponent(m[2]);
+
+    if (req.method === "GET") {
+      const bytes = rooms.get(roomName)?.blobs.get(id);
+      if (!bytes) { res.writeHead(404).end(); return; }
+      res.writeHead(200, { "content-type": "application/octet-stream", "content-length": String(bytes.byteLength) });
+      res.end(Buffer.from(bytes));
+      return;
+    }
+
+    if (req.method === "PUT") {
+      const r = room(roomName);
+      if (r.blobs.has(id)) { res.writeHead(200).end("ok"); return; } // idempotent
+      const chunks: Buffer[] = [];
+      let size = 0;
+      let aborted = false;
+      req.on("data", (c: Buffer) => {
+        if (aborted) return;
+        size += c.length;
+        if (size > maxBlobBytes || r.blobBytes + size > maxRoomBlobBytes) {
+          aborted = true;
+          res.writeHead(413).end("blob too large");
+          req.destroy();
+          return;
+        }
+        chunks.push(c);
+      });
+      req.on("end", () => {
+        if (aborted) return;
+        const bytes = new Uint8Array(Buffer.concat(chunks));
+        r.blobs.set(id, bytes);
+        r.blobBytes += bytes.byteLength;
+        log(`▣ blob ${id.slice(0, 8)}… stored on ${roomName} (${bytes.byteLength} B, ${r.blobs.size} total)`);
+        res.writeHead(200).end("ok");
+      });
+      req.on("error", () => { if (!aborted) res.writeHead(400).end(); });
+      return;
+    }
+
+    res.writeHead(405).end();
+  };
+
   return new Promise((resolve, reject) => {
-    const wss = new WebSocketServer({ port: opts.port }, () => {
-      const port = (wss.address() as AddressInfo).port;
+    const httpServer = http.createServer(handleHttp);
+    const wss = new WebSocketServer({ server: httpServer });
+    httpServer.on("error", reject);
+    httpServer.listen(opts.port, () => {
+      const addr = httpServer.address();
+      const port = typeof addr === "object" && addr ? addr.port : opts.port;
       log(`quorum relay listening on ws://localhost:${port}`);
       resolve({
         port,
@@ -93,7 +241,7 @@ export function startRelay(opts: RelayOptions): Promise<RelayHandle> {
           new Promise<void>((res) => {
             clearInterval(heartbeat);
             for (const r of rooms.values()) for (const ws of r.clients.keys()) ws.terminate();
-            wss.close(() => res());
+            wss.close(() => httpServer.close(() => res()));
           }),
       });
     });
@@ -116,6 +264,7 @@ export function startRelay(opts: RelayOptions): Promise<RelayHandle> {
 
     wss.on("connection", (ws: WebSocket) => {
       let joined: Room | null = null;
+      let joinedName = "";
       alive.set(ws, true);
       ws.on("pong", () => alive.set(ws, true));
 
@@ -157,6 +306,7 @@ export function startRelay(opts: RelayOptions): Promise<RelayHandle> {
 
           r.clients.set(ws, { handle: msg.handle, clientId: msg.clientId, kind: msg.kind === "agent" ? "agent" : "human" });
           joined = r;
+          joinedName = msg.room;
           log(`+ ${msg.handle} joined ${msg.room} (${r.clients.size} here)`);
           send(ws, { t: "welcome", room: msg.room, participants: roster(r), agents: agentRoster(r), ops: r.ops, ledgerOps: r.ledgerOps, checkpointOps: r.checkpointOps });
           broadcast(r, { t: "presence", participants: roster(r), agents: agentRoster(r) });
@@ -169,6 +319,9 @@ export function startRelay(opts: RelayOptions): Promise<RelayHandle> {
           joined.seen.add(op.id);
           joined.ops.push(op);
           broadcast(joined, { t: "op", op }, ws);
+          // Notify any registered members who aren't connected right now.
+          const sender = joined.clients.get(ws)?.handle ?? (op as { author?: string }).author ?? "someone";
+          notifyOffline(joined, joinedName, sender);
           return;
         }
 
@@ -187,6 +340,36 @@ export function startRelay(opts: RelayOptions): Promise<RelayHandle> {
           joined.checkpointSeen.add(op.id);
           joined.checkpointOps.push(op);
           broadcast(joined, { t: "checkpoint", op }, ws);
+          return;
+        }
+
+        // Ephemeral signals (typing, read receipts): fan out to the others and
+        // forget. Never stored, so they don't appear in a welcome or a save.
+        if (msg.t === "signal" && joined) {
+          broadcast(joined, { t: "signal", sig: msg.sig, from: msg.from, data: msg.data }, ws);
+          return;
+        }
+
+        // Register a device push token for this member (kept across reconnects,
+        // keyed by handle), so we can notify them while they're disconnected.
+        if (msg.t === "register-push" && joined) {
+          const member = joined.clients.get(ws);
+          if (member && looksLikeExpoToken(msg.token)) {
+            const set = joined.pushTokens.get(member.handle) ?? new Set<string>();
+            set.add(msg.token);
+            joined.pushTokens.set(member.handle, set);
+            log(`⤵ push token registered for ${member.handle} on ${joinedName}`);
+          }
+          return;
+        }
+
+        // Mute / unmute this member's push for the room (held across reconnects).
+        if (msg.t === "set-mute" && joined) {
+          const member = joined.clients.get(ws);
+          if (member) {
+            if (msg.muted) joined.muted.add(member.handle);
+            else joined.muted.delete(member.handle);
+          }
         }
       });
 

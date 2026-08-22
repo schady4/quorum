@@ -12,14 +12,20 @@
       "types": "./dist/sdk.d.ts",
       "import": "./dist/sdk.js"
     },
+    "./native": {
+      "types": "./dist/native.d.ts",
+      "import": "./dist/native.js"
+    },
     "./package.json": "./package.json"
   },
   "//transport": "React Native (Metro) and web bundlers are redirected from the Node `ws` transport to the platform-WebSocket one, so `ws` and its Node built-ins never reach a mobile/web bundle.",
   "react-native": {
-    "./dist/net/ws-impl.js": "./dist/net/ws-impl.native.js"
+    "./dist/net/ws-impl.js": "./dist/net/ws-impl.native.js",
+    "./dist/net/crypto-impl.js": "./dist/net/crypto-impl.native.js"
   },
   "browser": {
-    "./dist/net/ws-impl.js": "./dist/net/ws-impl.native.js"
+    "./dist/net/ws-impl.js": "./dist/net/ws-impl.native.js",
+    "./dist/net/crypto-impl.js": "./dist/net/crypto-impl.native.js"
   },
   "bin": {
     "quorum": "./dist/cli.js"
@@ -70,7 +76,12 @@
     "test:persist": "tsx test/persist.test.ts",
     "test:torchbearer": "tsx test/torchbearer.test.ts",
     "test:revive": "tsx test/revive.test.ts",
-    "test:all": "npm run test && npm run test:net && npm run test:agent && npm run test:delegate && npm run test:ledger && npm run test:session && npm run test:config && npm run test:router && npm run test:responder && npm run test:durable && npm run test:reconnect && npm run test:auth && npm run test:keepalive && npm run test:e2e && npm run test:vanish && npm run test:tui && npm run test:style && npm run test:sdk && npm run test:persist && npm run test:torchbearer && npm run test:revive && npm run test:restore",
+    "test:native": "tsx test/native.test.ts",
+    "test:signal": "tsx test/signal.test.ts",
+    "test:blob": "tsx test/blob.test.ts",
+    "test:push": "tsx test/push.test.ts",
+    "test:summary": "tsx test/summary.test.ts",
+    "test:all": "npm run test && npm run test:net && npm run test:agent && npm run test:delegate && npm run test:ledger && npm run test:session && npm run test:config && npm run test:router && npm run test:responder && npm run test:durable && npm run test:reconnect && npm run test:auth && npm run test:keepalive && npm run test:e2e && npm run test:vanish && npm run test:tui && npm run test:style && npm run test:sdk && npm run test:persist && npm run test:torchbearer && npm run test:revive && npm run test:restore && npm run test:native && npm run test:signal && npm run test:blob && npm run test:push && npm run test:summary",
     "typecheck": "tsc --noEmit",
     "test:restore": "tsx test/restore.test.ts"
   },
@@ -93,6 +104,9 @@
     "typescript": "^5.6.0"
   },
   "dependencies": {
+    "@noble/ciphers": "^2.3.0",
+    "@noble/hashes": "^2.3.0",
+    "@scure/base": "^1.2.6",
     "ink": "^7.1.1",
     "react": "^19.2.8",
     "ws": "^8.21.3"

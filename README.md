@@ -16,7 +16,7 @@ up whichever providers you want.
 > npm so friends install it in one line. Rooms are **secure by default** — one
 > shared key both gates joins and end-to-end encrypts the traffic, so the relay
 > is a zero-knowledge mailbox — and clients **auto-reconnect** through drops.
-> 175 tests across 22 suites. Plan and
+> 211 tests across 27 suites. Plan and
 > architecture live in the sibling repo —
 > [`multiplayer-ai/ROADMAP.md`](https://github.com/schady4/multiplayer-ai/blob/main/ROADMAP.md)
 > ([tracking epic](https://github.com/schady4/multiplayer-ai/issues/8)).
@@ -229,6 +229,25 @@ The wire contract is documented in [PROTOCOL.md](PROTOCOL.md): anything that
 speaks it and holds the room key is a first-class participant, indistinguishable
 on the bus from any other. That's the whole basis for a universal conversation
 pipeline instead of another silo.
+
+### On a phone or in the browser — `@schady4/quorum/native`
+
+The default entry pulls in Node-only machinery (on-disk saves, the credential
+store, the AI-seat runtime) that a **React Native or web** app can't bundle. For
+those surfaces import the `/native` entry instead — the same `RoomClient`, room
+crypto, and protocol, with everything that touches `node:fs`/`os`/`zlib` left on
+the server:
+
+```ts
+import { RoomClient, roomCrypto } from "@schady4/quorum/native";
+```
+
+The transport and crypto resolve to pure-JS, platform-native implementations
+automatically (Metro/web bundlers follow the package's `react-native`/`browser`
+field maps), and their outputs match the Node build byte-for-byte — so a phone
+and a laptop in the same room derive the same keys and decrypt each other. A
+[guard test](test/native.test.ts) walks this entry's import graph on every run
+and fails if a Node-only module ever creeps back in.
 
 ## Saving & reviving sessions
 

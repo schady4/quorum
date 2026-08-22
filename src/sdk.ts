@@ -33,6 +33,17 @@ export type { RoomClientEvents } from "./net/client.js";
 export { roomCrypto, deriveAuthToken, authMatches, OPEN_ROOM } from "./net/crypto.js";
 export type { RoomCrypto } from "./net/crypto.js";
 
+// --- The blob channel: large attachments, sealed, over the relay's store -----
+export { putBlob, getBlob, blobBaseUrl, blobId, AUTH_HEADER } from "./net/blob.js";
+
+// --- Push: notify disconnected members of new messages (metadata only) -------
+export { expoPushSender, looksLikeExpoToken, EXPO_PUSH_ENDPOINT } from "./net/push.js";
+export type { PushMessage, PushSender } from "./net/push.js";
+
+// --- Room summaries: unread / last-activity across rooms, no socket ----------
+export { roomSummaries } from "./net/summary.js";
+export type { RoomSummary, SummaryResponse } from "./net/summary.js";
+
 // --- The wire protocol (the stable public contract; see PROTOCOL.md) ---------
 export { encode, decode } from "./net/protocol.js";
 export type {
@@ -43,6 +54,9 @@ export type {
   CheckpointFrame,
   Denied,
   Presence,
+  Signal,
+  RegisterPush,
+  SetMute,
   CheckpointOp,
   ClientMsg,
   ServerMsg,

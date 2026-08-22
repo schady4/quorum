@@ -36,19 +36,82 @@ Either direction unless noted:
 | `ledger`     | `{ op }`                   | one decision-ledger op (fork / edit / merge) |
 | `checkpoint` | `{ op }`                   | a seat's progress marker |
 | `presence`   | `{ participants }`         | server → clients: the roster changed |
+| `signal`     | `{ sig, from, data? }`     | an **ephemeral** signal (typing, read receipt) |
+| `register-push` | `{ token }`             | client → server: a device push token for this member |
+| `set-mute`   | `{ muted }`                | client → server: mute/unmute push for this member in the room |
 
 The relay appends each `op`/`ledger`/`checkpoint` to the room's log (deduped by
 `op.id`) and broadcasts it to the other clients. It never inspects payload
 content.
 
+### Signals (ephemeral)
+
+A `signal` is fanned out to the other members and then **forgotten** — never
+appended to a log, never in a `welcome` catch-up, never in a saved bond. It's the
+channel for transient, high-frequency metadata that must not bloat the durable
+history: typing state, read receipts. `sig` names the kind, `from` is the
+sender's handle, `data` is kind-specific and travels in the clear (structural
+metadata, like op ids and handles, is never hidden — see below).
+
+## Blob channel (large attachments)
+
+Alongside the WebSocket, the relay serves a content-addressed blob store over
+HTTP on the same host/port, so large attachments don't have to be inlined into
+messages (which would bloat the op log):
+
+| method + path              | meaning |
+|----------------------------|---------|
+| `PUT /blob/:room/:id`      | store sealed bytes (idempotent; `id` = sha256 of the ciphertext) |
+| `GET /blob/:room/:id`      | fetch the sealed bytes |
+| `GET /rooms/summary?rooms=a,b` | per-room `{ count, lastTs?, lastAuthor? }` — activity, no content |
+
+Both require the room auth token in an **`x-quorum-auth`** header (the same gate
+as the socket). The client seals a file's bytes with the room key **before**
+upload, so the relay stores only opaque ciphertext keyed by its own hash — the
+same zero-knowledge property as the message stream. A chat message then carries
+just a small reference `{ blobId, name, mime, size }`; a receiver `GET`s the
+ciphertext and opens it with the room key. Per-blob and per-room size caps are
+configured on the relay (`maxBlobBytes`, `maxRoomBlobBytes`).
+
+## Push notifications (disconnected members)
+
+A client sends `register-push` with its device push token after joining; the
+relay keeps it keyed by handle + room, across reconnects. When a chat `op`
+arrives, the relay notifies every registered handle that is **not currently
+connected** (and never the sender), rate-limited per handle. A member can send
+`set-mute { muted: true }` to be **skipped** by offline-notify for that room
+(also held across reconnects); the client re-asserts push token and mute state
+on every join. This makes mute hold even when the app is closed — unlike a
+client-only mute, which the OS can't consult before showing a background push.
+
+The push is **content-free by construction**: the relay is zero-knowledge, so it
+can only send metadata it already sees — the sender's handle and the room name
+(`{ title: room, body: "<handle> sent a message", data: { room } }`), never the
+message text. Delivery defaults to Expo's push API and is injectable
+(`sendPush`) for a different gateway or for tests; set `push: false` to disable
+outbound push entirely.
+
+## Room summaries (activity without a socket)
+
+`GET /rooms/summary?rooms=a,b,c` (auth-gated by the `x-quorum-auth` header)
+returns, per room, `{ count, lastTs?, lastAuthor? }` — the op-log length and the
+last op's time + author. A client (a rooms list) compares `count` against the
+count it last saw to badge unread/activity, and uses `lastTs`/`lastAuthor` for a
+"last active" line, all without opening a socket to each room. Metadata only:
+the count includes reaction/edit control ops the relay can't distinguish (treat
+it as activity, not an exact message count), and no message content is ever
+returned.
+
 ### Chat ops (RGA)
 
-`{ type: "insert", id, after, value, author }` — a message is one element in a
-replicated growable array. `after` is the id of the element it follows;
+`{ type: "insert", id, after, value, author, ts? }` — a message is one element in
+a replicated growable array. `after` is the id of the element it follows;
 concurrent inserts at the same point order deterministically by `id`. `apply` is
 idempotent (dedupe by `id`), so replaying the log converges. `value` is the
 message text, **sealed** when the room is keyed (see below). `author` is the
-seat's handle (plaintext — presence is not hidden).
+seat's handle (plaintext — presence is not hidden). `ts` is the author's
+wall-clock send time (epoch ms), **display-only** — ordering is the causal tree,
+never the clock — and optional for back-compat.
 
 ### Ledger ops
 

@@ -4,7 +4,7 @@
 // same causal-tree rule that orders characters — the chat stream is just an RGA
 // whose elements are whole messages instead of single characters.
 
-import { EventEmitter } from "node:events";
+import { Emitter } from "./emitter.js";
 import { makeSocket } from "./ws-impl.js";
 import { OPEN, type Socket } from "./socket.js";
 import { createSurface, type CrdtSurface, type Entry, type InsertOp, type Op } from "../core/crdt.js";
@@ -32,11 +32,14 @@ export interface RoomClientEvents {
   reconnecting: (info: { attempt: number; delayMs: number }) => void;
   /** The relay refused the join (e.g. wrong room key). Terminal — no retry. */
   denied: (reason: string) => void;
+  /** An ephemeral signal from another member (typing, read receipt, …). Never
+   *  persisted — present only while both peers are connected. */
+  signal: (msg: { sig: string; from: string; data?: unknown }) => void;
   close: () => void;
   error: (err: Error) => void;
 }
 
-export class RoomClient extends EventEmitter {
+export class RoomClient extends Emitter<RoomClientEvents> {
   readonly clientId = newClientId();
   private surface: CrdtSurface = createSurface();
   readonly ledger = new Ledger();
@@ -64,6 +67,10 @@ export class RoomClient extends EventEmitter {
   store?: RoomStore;
   private persistedIds = new Set<string>();
   private storeLoaded = false;
+  /** Device push token, re-registered with the relay on each connect. */
+  private pushToken?: string;
+  /** Mute state for this room, re-asserted with the relay on each connect. */
+  private muted?: boolean;
 
   /** Reconnect backoff schedule. Public so callers (and tests) can tune it; the
    *  delay is baseMs * 2^attempt, capped at maxMs, plus up to 20% jitter. */
@@ -207,6 +214,8 @@ export class RoomClient extends EventEmitter {
         this.participants = msg.participants;
         this.agents = msg.agents ?? [];
         this.reseed(have); // restore the relay from our durable log if it lost anything
+        this.sendPushRegistration(); // (re)assert our push token now that we're joined
+        this.sendMute(); // (re)assert our mute state for this room
         this.emit("presence", this.participants);
         this.emit("update", this.viewEntries());
         this.emit("ledger", this.ledger);
@@ -226,6 +235,9 @@ export class RoomClient extends EventEmitter {
         this.participants = msg.participants;
         this.agents = msg.agents ?? [];
         this.emit("presence", this.participants);
+      } else if (msg.t === "signal") {
+        // Ephemeral — surface it and move on; nothing is applied or persisted.
+        this.emit("signal", { sig: msg.sig, from: msg.from, data: msg.data });
       } else if (msg.t === "denied") {
         // A refused join won't succeed on retry — stop the reconnect loop and
         // surface the reason. Prefer a "denied" listener; fall back to "error".
@@ -311,11 +323,41 @@ export class RoomClient extends EventEmitter {
       after: this.surface.tail(),
       value: this.crypto.enc(text), // ciphertext on the wire and in the surface
       author: this.handle,
+      ts: Date.now(),
     };
     this.surface.apply(op);
     this.persist("op", op);
     this.emit("update", this.viewEntries());
     if (this.live) this.ws!.send(encode({ t: "op", op }));
+  }
+
+  /** Broadcast an ephemeral signal (typing, read receipt, …) to the room. Fire-
+   *  and-forget: no local echo, nothing persisted, dropped silently if the
+   *  socket isn't open (it's transient — a missed signal just isn't seen). */
+  signal(sig: string, data?: unknown): void {
+    if (this.live) this.ws!.send(encode({ t: "signal", sig, from: this.handle, data }));
+  }
+
+  /** Register a device push token so the relay can notify this seat of new
+   *  messages while it's disconnected. Remembered and re-sent on every
+   *  (re)connect, since the relay keys tokens by handle. */
+  registerPush(token: string): void {
+    this.pushToken = token;
+    this.sendPushRegistration();
+  }
+  private sendPushRegistration(): void {
+    if (this.pushToken && this.live) this.ws!.send(encode({ t: "register-push", token: this.pushToken }));
+  }
+
+  /** Mute (or unmute) push for this seat in the room. Remembered and re-asserted
+   *  on every (re)connect, so the relay skips notifying a muted member even after
+   *  a reconnect. */
+  setMuted(muted: boolean): void {
+    this.muted = muted;
+    this.sendMute();
+  }
+  private sendMute(): void {
+    if (this.muted !== undefined && this.live) this.ws!.send(encode({ t: "set-mute", muted: this.muted }));
   }
 
   /** Replay externally-built frames (e.g. from a saved .qdag bond) onto a room:

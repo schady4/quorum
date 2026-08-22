@@ -81,8 +81,40 @@ export interface Presence {
   agents: string[];
 }
 
-export type ClientMsg = Hello | OpFrame | LedgerFrame | CheckpointFrame;
-export type ServerMsg = Welcome | OpFrame | LedgerFrame | CheckpointFrame | Presence | Denied;
+/** either direction: an EPHEMERAL signal — typing state, read receipts, and the
+ *  like. The relay fans it out to the other members and forgets it: never
+ *  stored in the op log, never in a welcome catch-up, never in a saved bond. So
+ *  it's the right channel for transient, high-frequency metadata that must not
+ *  bloat the durable history. `sig` names the kind ("typing", "read", …), `from`
+ *  is the sender's handle, `data` is kind-specific (structural metadata, sent in
+ *  the clear like op ids and handles). */
+export interface Signal {
+  t: "signal";
+  sig: string;
+  from: string;
+  data?: unknown;
+}
+
+/** client -> server: register a device push token for this member, so the relay
+ *  can notify them of new messages while they're disconnected. The relay keys it
+ *  by the joined handle and room and keeps it across reconnects. It only ever
+ *  pushes metadata (who, which room) — never content, which it can't read. */
+export interface RegisterPush {
+  t: "register-push";
+  /** An Expo push token (ExponentPushToken[…]). */
+  token: string;
+}
+
+/** client -> server: mute (or unmute) push for this member in the joined room.
+ *  A muted member is skipped by the relay's offline-notify, so the mute holds
+ *  even when the app is closed. Kept across reconnects, keyed by handle. */
+export interface SetMute {
+  t: "set-mute";
+  muted: boolean;
+}
+
+export type ClientMsg = Hello | OpFrame | LedgerFrame | CheckpointFrame | Signal | RegisterPush | SetMute;
+export type ServerMsg = Welcome | OpFrame | LedgerFrame | CheckpointFrame | Presence | Denied | Signal;
 
 export function encode(msg: ClientMsg | ServerMsg): string {
   return JSON.stringify(msg);

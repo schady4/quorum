@@ -24,7 +24,7 @@
 
 import { gzipSync, gunzipSync } from "node:zlib";
 import { createHash } from "node:crypto";
-import { roomCrypto } from "../net/crypto.js";
+import { roomCrypto, type RoomCrypto } from "../net/crypto.js";
 import { ROOT, type Entry, type InsertOp } from "../core/crdt.js";
 import type { LedgerOp } from "../core/ledger.js";
 
@@ -97,15 +97,15 @@ interface Chunk {
   body: string;
 }
 
+// The room crypto is built ONCE per save/read and threaded through, not
+// reconstructed per chunk (its scrypt derivation is deliberately expensive).
 /** Pack raw bytes for storage: gzip, base64, and (when keyed) AES-256-GCM seal. */
-function packBody(raw: Buffer, sealed: boolean, key: string | undefined, room: string): string {
-  const gzB64 = gzipSync(raw).toString("base64");
-  return sealed ? roomCrypto(key as string, room).enc(gzB64) : gzB64;
+function packBody(raw: Buffer, crypto: RoomCrypto): string {
+  return crypto.enc(gzipSync(raw).toString("base64"));
 }
 /** The inverse of packBody. */
-function unpackBody(body: string, sealed: boolean, key: string | undefined, room: string): Buffer {
-  const gzB64 = sealed ? roomCrypto(key as string, room).dec(body) : body;
-  return gunzipSync(Buffer.from(gzB64, "base64"));
+function unpackBody(body: string, crypto: RoomCrypto): Buffer {
+  return gunzipSync(Buffer.from(crypto.dec(body), "base64"));
 }
 function hash16(s: string): string {
   return createHash("sha256").update(s).digest("hex").slice(0, 16);
@@ -136,13 +136,14 @@ export function writeSave(session: Session, emit: (line: string) => void, opts: 
   const { key, maxChunkBytes = DEFAULT_CHUNK_BYTES } = opts;
   const sealed = key != null && key !== "";
   const room = session.room;
-  const ledger = packBody(Buffer.from(JSON.stringify(session.ledger), "utf8"), sealed, key, room);
+  const crypto = roomCrypto(key, room);
+  const ledger = packBody(Buffer.from(JSON.stringify(session.ledger), "utf8"), crypto);
   const manifest: Manifest = { magic: MAGIC, room, created: session.created, sealed, roster: session.roster, ledger };
   emit(JSON.stringify(manifest));
   let i = 0;
   for (const slice of chunkMessages(session.messages, maxChunkBytes)) {
     const raw = Buffer.from(JSON.stringify(slice.map((m) => [m.author, m.text])), "utf8");
-    const body = packBody(raw, sealed, key, room);
+    const body = packBody(raw, crypto);
     const chunk: Chunk = { i: i++, n: slice.length, hash: hash16(body), body };
     emit(JSON.stringify(chunk));
   }
@@ -171,12 +172,13 @@ export function decodeSave(file: string, key?: string): Session {
   const lines = file.split("\n").filter((l) => l.length > 0);
   if (lines.length === 0) throw new Error("empty save");
   const man = parseManifest(lines[0], key);
-  const ledger = JSON.parse(unpackBody(man.ledger, man.sealed, key, man.room).toString("utf8")) as LedgerOpBody[];
+  const crypto = roomCrypto(key, man.room);
+  const ledger = JSON.parse(unpackBody(man.ledger, crypto).toString("utf8")) as LedgerOpBody[];
   const messages: { author: string; text: string }[] = [];
   for (let li = 1; li < lines.length; li++) {
     const c = JSON.parse(lines[li]) as Chunk;
     if (hash16(c.body) !== c.hash) throw new Error(`save chunk ${c.i} failed its integrity check`);
-    const slice = JSON.parse(unpackBody(c.body, man.sealed, key, man.room).toString("utf8")) as [string, string][];
+    const slice = JSON.parse(unpackBody(c.body, crypto).toString("utf8")) as [string, string][];
     for (const [a, t] of slice) messages.push({ author: a, text: t });
   }
   return { room: man.room, created: man.created, roster: man.roster, messages, ledger };
@@ -189,7 +191,7 @@ export function readManifest(file: string, key?: string): { room: string; create
   const nl = file.indexOf("\n");
   const firstLine = nl === -1 ? file : file.slice(0, nl);
   const man = parseManifest(firstLine, key);
-  const ledger = JSON.parse(unpackBody(man.ledger, man.sealed, key, man.room).toString("utf8")) as LedgerOpBody[];
+  const ledger = JSON.parse(unpackBody(man.ledger, roomCrypto(key, man.room)).toString("utf8")) as LedgerOpBody[];
   return { room: man.room, created: man.created, roster: man.roster, ledger, sealed: man.sealed };
 }
 
@@ -218,7 +220,8 @@ export function streamFrames(lines: Iterable<string>, opts: { key?: string } = {
   const first = it.next();
   if (first.done) throw new Error("empty save");
   const man = parseManifest(first.value, opts.key);
-  const ledger = JSON.parse(unpackBody(man.ledger, man.sealed, opts.key, man.room).toString("utf8")) as LedgerOpBody[];
+  const crypto = roomCrypto(opts.key, man.room);
+  const ledger = JSON.parse(unpackBody(man.ledger, crypto).toString("utf8")) as LedgerOpBody[];
   emit({ ledgerOps: ledger.map((body, i) => ({ ...body, id: `${site}L:${i + 1}` }) as LedgerOp) });
 
   let after = ROOT;
@@ -227,7 +230,7 @@ export function streamFrames(lines: Iterable<string>, opts: { key?: string } = {
     if (!r.value) continue;
     const c = JSON.parse(r.value) as Chunk;
     if (hash16(c.body) !== c.hash) throw new Error(`save chunk ${c.i} failed its integrity check`);
-    const slice = JSON.parse(unpackBody(c.body, man.sealed, opts.key, man.room).toString("utf8")) as [string, string][];
+    const slice = JSON.parse(unpackBody(c.body, crypto).toString("utf8")) as [string, string][];
     const ops: InsertOp[] = [];
     for (const [a, t] of slice) {
       const id = `${site}:${++n}`;

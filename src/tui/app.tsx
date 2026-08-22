@@ -28,6 +28,8 @@ import type { AgentSeat } from "../agent/seat.js";
 import { providers, getProvider } from "../providers/index.js";
 import { loadCredentials, missingRequired, testProvider } from "../config/credentials.js";
 import { loadStore, saveStore } from "../config/store.js";
+import { sessionFromClient } from "../session/qdag.js";
+import { isLastHuman, savePrompt, saveSessionToDir, reviveHint } from "../session/torchbearer.js";
 
 function colorFor(author: string): (typeof INK_HANDLE_PALETTE)[number] {
   return INK_HANDLE_PALETTE[hueIndex(author, INK_HANDLE_PALETTE.length)];
@@ -101,6 +103,10 @@ function App({ client, resolver }: { client: RoomClient; resolver?: MergeResolve
   const app = useApp();
   const [entries, setEntries] = useState<Entry[]>(client.entries());
   const [participants, setParticipants] = useState<string[]>(client.participants);
+  const [agents, setAgents] = useState<string[]>(client.agents);
+  // The torchbearer prompt: when the last human quits a non-empty room, we ask
+  // before letting the session evaporate.
+  const [confirming, setConfirming] = useState(false);
   const [, forceLedger] = useState(0);
   const [line, setLine] = useState<Line>(EMPTY);
   const [notice, setNotice] = useState("");
@@ -137,7 +143,10 @@ function App({ client, resolver }: { client: RoomClient; resolver?: MergeResolve
 
   useEffect(() => {
     const onUpdate = (e: Entry[]) => setEntries([...e]);
-    const onPresence = (p: string[]) => setParticipants([...p]);
+    const onPresence = (p: string[]) => {
+      setParticipants([...p]);
+      setAgents([...client.agents]);
+    };
     const onLedger = () => forceLedger((n) => n + 1);
     const onOpen = () => {
       setStatus("online");
@@ -317,6 +326,26 @@ function App({ client, resolver }: { client: RoomClient; resolver?: MergeResolve
   const win = windowFor(entries.length, viewportRows, offset);
   const visible = entries.slice(win.start, win.end);
 
+  function quit(): void {
+    for (const seat of spawnedSeats.current) seat.close();
+    client.close();
+    app.exit();
+  }
+
+  // Torchbearer save: materialize the session, write a (sealed) .qdag, and print
+  // where it landed after the app unmounts, so the hint survives in scrollback.
+  function saveAndQuit(): void {
+    try {
+      const path = saveSessionToDir(sessionFromClient(client), client.key);
+      const hint = reviveHint(path, client.key != null && client.key !== "");
+      process.once("exit", () => process.stderr.write("\n" + hint + "\n"));
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      process.once("exit", () => process.stderr.write("\nsave failed: " + msg + "\n"));
+    }
+    quit();
+  }
+
   useInput((input, key) => {
     // A denied join is terminal — client.ts never retries it, so nothing typed
     // from here on can ever reach anyone. RoomClient.send() still applies an
@@ -329,6 +358,14 @@ function App({ client, resolver }: { client: RoomClient; resolver?: MergeResolve
         client.close();
         app.exit();
       }
+      return;
+    }
+
+    // The torchbearer prompt owns all input while it's up: y saves, anything
+    // else (n / Enter / Esc) leaves without saving.
+    if (confirming) {
+      if (input === "y" || input === "Y") saveAndQuit();
+      else quit();
       return;
     }
 
@@ -351,9 +388,12 @@ function App({ client, resolver }: { client: RoomClient; resolver?: MergeResolve
       return;
     }
     if (key.escape) {
-      for (const seat of spawnedSeats.current) seat.close();
-      client.close();
-      app.exit();
+      // Last human out of a non-empty room? Offer to save before it's gone.
+      if (isLastHuman(participants, agents, client.handle) && entries.length > 0) {
+        setConfirming(true);
+        return;
+      }
+      quit();
       return;
     }
 
@@ -442,8 +482,10 @@ function App({ client, resolver }: { client: RoomClient; resolver?: MergeResolve
 
       {/* one fixed line, blank when there's no notice */}
       <Text color="yellow">{notice || " "}</Text>
-      <Box borderStyle="round" borderColor={status === "denied" ? "red" : "gray"} paddingX={1}>
-        {status === "denied" ? (
+      <Box borderStyle="round" borderColor={confirming ? "yellow" : status === "denied" ? "red" : "gray"} paddingX={1}>
+        {confirming ? (
+          <Text color="yellow">{savePrompt()}</Text>
+        ) : status === "denied" ? (
           <Text color="gray">room denied — nothing typed here can send · esc to quit</Text>
         ) : (
           <>

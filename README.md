@@ -16,7 +16,7 @@ up whichever providers you want.
 > npm so friends install it in one line. Rooms are **secure by default** — one
 > shared key both gates joins and end-to-end encrypts the traffic, so the relay
 > is a zero-knowledge mailbox — and clients **auto-reconnect** through drops.
-> 152 tests across 19 suites. Plan and
+> 165 tests across 20 suites. Plan and
 > architecture live in the sibling repo —
 > [`multiplayer-ai/ROADMAP.md`](https://github.com/schady4/multiplayer-ai/blob/main/ROADMAP.md)
 > ([tracking epic](https://github.com/schady4/multiplayer-ai/issues/8)).
@@ -244,9 +244,12 @@ Two storage mechanisms sit on the same op-log substrate (details in
   a live room. Small because a finished save drops the live-only CRDT plumbing
   and keeps just the replayable result, interned + gzipped + sealed.
 
-Both are exported from the SDK today (`RoomStore`/`FileRoomStore`,
-`encodeSave`/`decodeSave`/`framesFrom`); the in-chat UX — a save prompt for the
-last person out, and a revive command — is the next slice.
+**Torchbearer save.** When the last human quits a non-empty room (AI seats don't
+hold the torch), the chat window offers to save it before it's gone — `[y/N]`.
+Say yes and it writes a sealed `.qdag` under `~/.quorum/saves/` and prints how to
+bring it back. Everything's exported from the SDK too (`RoomStore`/`FileRoomStore`,
+`encodeSave`/`decodeSave`/`framesFrom`, `isLastHuman`/`saveSessionToDir`); the
+**revive command** (`quorum open <file> --key K`) is the next slice.
 
 ## Adding a model provider
 

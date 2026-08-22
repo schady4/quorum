@@ -15,6 +15,8 @@ interface Member {
   handle: string;
   /** The client's stable id, used to distinguish a reconnect from a collision. */
   clientId?: string;
+  /** Human or AI seat — so the roster can report who the humans are. */
+  kind: "human" | "agent";
 }
 
 interface Room {
@@ -73,6 +75,7 @@ export function startRelay(opts: RelayOptions): Promise<RelayHandle> {
   };
 
   const roster = (r: Room): string[] => [...r.clients.values()].map((m) => m.handle);
+  const agentRoster = (r: Room): string[] => [...r.clients.values()].filter((m) => m.kind === "agent").map((m) => m.handle);
 
   // Liveness: a socket that fails to answer a ping between beats is presumed
   // dead and terminated. `alive` is flipped false when we ping and back to true
@@ -152,11 +155,11 @@ export function startRelay(opts: RelayOptions): Promise<RelayHandle> {
             break;
           }
 
-          r.clients.set(ws, { handle: msg.handle, clientId: msg.clientId });
+          r.clients.set(ws, { handle: msg.handle, clientId: msg.clientId, kind: msg.kind === "agent" ? "agent" : "human" });
           joined = r;
           log(`+ ${msg.handle} joined ${msg.room} (${r.clients.size} here)`);
-          send(ws, { t: "welcome", room: msg.room, participants: roster(r), ops: r.ops, ledgerOps: r.ledgerOps, checkpointOps: r.checkpointOps });
-          broadcast(r, { t: "presence", participants: roster(r) });
+          send(ws, { t: "welcome", room: msg.room, participants: roster(r), agents: agentRoster(r), ops: r.ops, ledgerOps: r.ledgerOps, checkpointOps: r.checkpointOps });
+          broadcast(r, { t: "presence", participants: roster(r), agents: agentRoster(r) });
           return;
         }
 
@@ -190,7 +193,7 @@ export function startRelay(opts: RelayOptions): Promise<RelayHandle> {
       ws.on("close", () => {
         if (!joined) return;
         joined.clients.delete(ws);
-        broadcast(joined, { t: "presence", participants: roster(joined) });
+        broadcast(joined, { t: "presence", participants: roster(joined), agents: agentRoster(joined) });
       });
     });
   });

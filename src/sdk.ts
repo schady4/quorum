@@ -17,9 +17,11 @@
 // the whole basis for a universal pipeline: one converged, provenance-carrying,
 // end-to-end-encrypted log, many faces.
 //
-// NOTE: this SDK targets Node hosts (it uses `ws` for the socket). A browser
-// surface needs the same client over the platform's native WebSocket — a thin
-// transport swap planned for the web/desktop/mobile phase.
+// The transport is platform-agnostic: the client speaks WebSocket through a
+// small adapter (net/socket.ts) that resolves to Node's `ws` on the server/CLI
+// and to the platform-native WebSocket in React Native / the browser (via the
+// "react-native"/"browser" fields in package.json), so the same client runs on
+// the phone, the desktop, and the server.
 
 // --- The bus: host a relay, join a room --------------------------------------
 export { startRelay } from "./relay/server.js";

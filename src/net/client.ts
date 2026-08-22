@@ -5,7 +5,8 @@
 // whose elements are whole messages instead of single characters.
 
 import { EventEmitter } from "node:events";
-import { WebSocket } from "ws";
+import { makeSocket } from "./ws-impl.js";
+import { OPEN, type Socket } from "./socket.js";
 import { createSurface, type CrdtSurface, type Entry, type InsertOp, type Op } from "../core/crdt.js";
 import { Ledger, type LedgerOp, type MergeResolver } from "../core/ledger.js";
 import type { BeliefState } from "../core/dag.js";
@@ -51,7 +52,7 @@ export class RoomClient extends EventEmitter {
   /** Decrypted-value cache, keyed by op id (op values are immutable). */
   private readonly plain = new Map<string, string>();
   private counter = 0;
-  private ws: WebSocket | null = null;
+  private ws: Socket | null = null;
   participants: string[] = [];
   /** The subset of `participants` that are AI seats, per the relay. */
   agents: string[] = [];
@@ -167,10 +168,10 @@ export class RoomClient extends EventEmitter {
   }
 
   private open(): void {
-    const ws = new WebSocket(this.url);
+    const ws = makeSocket(this.url);
     this.ws = ws;
 
-    ws.on("open", () => {
+    ws.onOpen(() => {
       this.attempt = 0; // a successful connection resets the backoff
       ws.send(encode({ t: "hello", room: this.room, handle: this.handle, auth: this.crypto.authToken, clientId: this.clientId, kind: this.kind }));
       this.startHeartbeat();
@@ -178,13 +179,12 @@ export class RoomClient extends EventEmitter {
     });
 
     // Any traffic from the relay — a frame, a pong to our ping, or its own ping
-    // — proves it's still there. The library auto-answers relay pings for us.
-    ws.on("pong", () => (this.sawActivity = true));
-    ws.on("ping", () => (this.sawActivity = true));
+    // — proves it's still there.
+    ws.onActivity(() => (this.sawActivity = true));
 
-    ws.on("message", (data: Buffer) => {
+    ws.onMessage((data: string) => {
       this.sawActivity = true;
-      const msg = decode(data.toString());
+      const msg = decode(data);
       if (msg.t === "welcome") {
         const have = new Set<string>();
         for (const op of msg.ops) {
@@ -239,7 +239,7 @@ export class RoomClient extends EventEmitter {
       }
     });
 
-    ws.on("close", () => {
+    ws.onClose(() => {
       this.stopHeartbeat();
       this.emit("close");
       if (!this.closing) this.scheduleReconnect();
@@ -247,16 +247,19 @@ export class RoomClient extends EventEmitter {
     // Guard the emit: with no "error" listener attached, a bare EventEmitter
     // 'error' would throw and crash the process — exactly what we don't want
     // during a transient drop, where the reconnect loop is the recovery path.
-    ws.on("error", (err: Error) => {
+    ws.onError((err: Error) => {
       if (this.listenerCount("error")) this.emit("error", err);
     });
   }
 
   private startHeartbeat(): void {
     this.stopHeartbeat();
+    // Browser/RN can't send WS pings, so there's no client-side silence check
+    // there — the relay's own keepalive still reaps a dead client.
+    if (!this.ws?.canPing) return;
     this.sawActivity = true; // a fresh connection starts alive
     this.heartbeatTimer = setInterval(() => {
-      if (this.ws?.readyState !== WebSocket.OPEN) return;
+      if (this.ws?.readyState !== OPEN) return;
       if (!this.sawActivity) {
         // A whole interval of silence: the relay is gone but the socket never
         // closed. Kill it ourselves so `close` fires and reconnect takes over.
@@ -295,7 +298,7 @@ export class RoomClient extends EventEmitter {
 
   /** True only while the socket is open and ready to transmit. */
   private get live(): boolean {
-    return this.ws?.readyState === WebSocket.OPEN;
+    return this.ws?.readyState === OPEN;
   }
 
   /** Post a message: apply locally for instant echo, then broadcast the op.

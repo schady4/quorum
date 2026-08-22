@@ -33,6 +33,9 @@ export type { RoomClientEvents } from "./net/client.js";
 export { roomCrypto, deriveAuthToken, authMatches, OPEN_ROOM } from "./net/crypto.js";
 export type { RoomCrypto } from "./net/crypto.js";
 
+// --- The blob channel: large attachments, sealed, over the relay's store -----
+export { putBlob, getBlob, blobBaseUrl, blobId, AUTH_HEADER } from "./net/blob.js";
+
 // --- The wire protocol (the stable public contract; see PROTOCOL.md) ---------
 export { encode, decode } from "./net/protocol.js";
 export type {
@@ -43,6 +46,7 @@ export type {
   CheckpointFrame,
   Denied,
   Presence,
+  Signal,
   CheckpointOp,
   ClientMsg,
   ServerMsg,

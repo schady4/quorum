@@ -4,11 +4,13 @@
 // replica, not something the server computes. Run your own, or point at a
 // shared one.
 
-import { WebSocketServer, WebSocket, type AddressInfo } from "ws";
+import http from "node:http";
+import { WebSocketServer, WebSocket } from "ws";
 import type { Op } from "../core/crdt.js";
 import type { LedgerOp } from "../core/ledger.js";
 import { decode, encode, type CheckpointOp, type ServerMsg } from "../net/protocol.js";
 import { authMatches } from "../net/crypto.js";
+import { AUTH_HEADER } from "../net/blob.js";
 
 /** What the relay tracks per connected socket. */
 interface Member {
@@ -32,6 +34,11 @@ interface Room {
   checkpointSeen: Set<string>;
   /** Connected sockets and who each is. */
   clients: Map<WebSocket, Member>;
+  /** The blob store: sealed (opaque) attachment bytes, keyed by content hash.
+   *  The relay can't read them — same zero-knowledge property as the op log. */
+  blobs: Map<string, Uint8Array>;
+  /** Running total of stored blob bytes, so a room can be capped. */
+  blobBytes: number;
 }
 
 export interface RelayHandle {
@@ -51,6 +58,10 @@ export interface RelayOptions {
   heartbeatMs?: number;
   /** Log connections/joins to stderr. Off in tests. */
   verbose?: boolean;
+  /** Max bytes for a single blob attachment. Default 25 MB. */
+  maxBlobBytes?: number;
+  /** Max total blob bytes retained per room. Default 256 MB. */
+  maxRoomBlobBytes?: number;
 }
 
 export function startRelay(opts: RelayOptions): Promise<RelayHandle> {
@@ -60,11 +71,13 @@ export function startRelay(opts: RelayOptions): Promise<RelayHandle> {
   const room = (name: string): Room => {
     let r = rooms.get(name);
     if (!r) {
-      r = { ops: [], seen: new Set(), ledgerOps: [], ledgerSeen: new Set(), checkpointOps: [], checkpointSeen: new Set(), clients: new Map() };
+      r = { ops: [], seen: new Set(), ledgerOps: [], ledgerSeen: new Set(), checkpointOps: [], checkpointSeen: new Set(), clients: new Map(), blobs: new Map(), blobBytes: 0 };
       rooms.set(name, r);
     }
     return r;
   };
+  const maxBlobBytes = opts.maxBlobBytes ?? 25 * 1024 * 1024;
+  const maxRoomBlobBytes = opts.maxRoomBlobBytes ?? 256 * 1024 * 1024;
 
   const send = (ws: WebSocket, msg: ServerMsg) => {
     if (ws.readyState === ws.OPEN) ws.send(encode(msg));
@@ -83,9 +96,75 @@ export function startRelay(opts: RelayOptions): Promise<RelayHandle> {
   const alive = new WeakMap<WebSocket, boolean>();
   const isDead = (ws: WebSocket): boolean => alive.get(ws) === false || ws.readyState !== ws.OPEN;
 
+  // --- the blob store, served over HTTP on the same host/port ---------------
+  // GET/PUT /blob/:room/:id. The relay stores only sealed (opaque) bytes keyed
+  // by their content hash; it never decrypts them. Auth is the same room token
+  // that gates the socket, presented in a header.
+  const cors = (res: http.ServerResponse) => {
+    res.setHeader("access-control-allow-origin", "*");
+    res.setHeader("access-control-allow-methods", "GET, PUT, OPTIONS");
+    res.setHeader("access-control-allow-headers", `content-type, ${AUTH_HEADER}`);
+  };
+  const handleHttp = (req: http.IncomingMessage, res: http.ServerResponse): void => {
+    cors(res);
+    if (req.method === "OPTIONS") { res.writeHead(204).end(); return; }
+
+    const m = /^\/blob\/([^/]+)\/([^/]+)\/?$/.exec((req.url ?? "").split("?")[0]);
+    if (!m) { res.writeHead(404).end(); return; }
+    if (!authMatches(opts.authToken, req.headers[AUTH_HEADER] as string | undefined)) {
+      res.writeHead(403).end("forbidden");
+      return;
+    }
+    const roomName = decodeURIComponent(m[1]);
+    const id = decodeURIComponent(m[2]);
+
+    if (req.method === "GET") {
+      const bytes = rooms.get(roomName)?.blobs.get(id);
+      if (!bytes) { res.writeHead(404).end(); return; }
+      res.writeHead(200, { "content-type": "application/octet-stream", "content-length": String(bytes.byteLength) });
+      res.end(Buffer.from(bytes));
+      return;
+    }
+
+    if (req.method === "PUT") {
+      const r = room(roomName);
+      if (r.blobs.has(id)) { res.writeHead(200).end("ok"); return; } // idempotent
+      const chunks: Buffer[] = [];
+      let size = 0;
+      let aborted = false;
+      req.on("data", (c: Buffer) => {
+        if (aborted) return;
+        size += c.length;
+        if (size > maxBlobBytes || r.blobBytes + size > maxRoomBlobBytes) {
+          aborted = true;
+          res.writeHead(413).end("blob too large");
+          req.destroy();
+          return;
+        }
+        chunks.push(c);
+      });
+      req.on("end", () => {
+        if (aborted) return;
+        const bytes = new Uint8Array(Buffer.concat(chunks));
+        r.blobs.set(id, bytes);
+        r.blobBytes += bytes.byteLength;
+        log(`▣ blob ${id.slice(0, 8)}… stored on ${roomName} (${bytes.byteLength} B, ${r.blobs.size} total)`);
+        res.writeHead(200).end("ok");
+      });
+      req.on("error", () => { if (!aborted) res.writeHead(400).end(); });
+      return;
+    }
+
+    res.writeHead(405).end();
+  };
+
   return new Promise((resolve, reject) => {
-    const wss = new WebSocketServer({ port: opts.port }, () => {
-      const port = (wss.address() as AddressInfo).port;
+    const httpServer = http.createServer(handleHttp);
+    const wss = new WebSocketServer({ server: httpServer });
+    httpServer.on("error", reject);
+    httpServer.listen(opts.port, () => {
+      const addr = httpServer.address();
+      const port = typeof addr === "object" && addr ? addr.port : opts.port;
       log(`quorum relay listening on ws://localhost:${port}`);
       resolve({
         port,
@@ -93,7 +172,7 @@ export function startRelay(opts: RelayOptions): Promise<RelayHandle> {
           new Promise<void>((res) => {
             clearInterval(heartbeat);
             for (const r of rooms.values()) for (const ws of r.clients.keys()) ws.terminate();
-            wss.close(() => res());
+            wss.close(() => httpServer.close(() => res()));
           }),
       });
     });
@@ -187,6 +266,13 @@ export function startRelay(opts: RelayOptions): Promise<RelayHandle> {
           joined.checkpointSeen.add(op.id);
           joined.checkpointOps.push(op);
           broadcast(joined, { t: "checkpoint", op }, ws);
+          return;
+        }
+
+        // Ephemeral signals (typing, read receipts): fan out to the others and
+        // forget. Never stored, so they don't appear in a welcome or a save.
+        if (msg.t === "signal" && joined) {
+          broadcast(joined, { t: "signal", sig: msg.sig, from: msg.from, data: msg.data }, ws);
         }
       });
 

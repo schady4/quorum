@@ -52,10 +52,21 @@ export interface RoomCrypto {
   enc(plain: string): string;
   /** Open a sealed blob. Returns plaintext unchanged if it isn't sealed. */
   dec(blob: string): string;
+  /** Seal raw bytes (for binary blobs — file attachments over the blob channel).
+   *  Returns iv|tag|ct as bytes. Identity when the room is open. */
+  encBytes(plain: Uint8Array): Uint8Array;
+  /** Open bytes sealed by encBytes. Identity when the room is open. */
+  decBytes(sealed: Uint8Array): Uint8Array;
 }
 
 /** The open-room transform: no auth, no encryption. */
-export const OPEN_ROOM: RoomCrypto = { authToken: "", enc: (s) => s, dec: (s) => s };
+export const OPEN_ROOM: RoomCrypto = {
+  authToken: "",
+  enc: (s) => s,
+  dec: (s) => s,
+  encBytes: (b) => b,
+  decBytes: (b) => b,
+};
 
 function master(secret: string): Uint8Array {
   // scrypt first so a human-chosen key still costs work to attack; HKDF then
@@ -97,6 +108,21 @@ export function roomCrypto(secret: string | undefined, room: string): RoomCrypto
       const tag = raw.subarray(12, 28);
       const ct = raw.subarray(28);
       return fromUtf8(backend.aesGcmOpen(encKey, iv, tag, ct));
+    },
+    encBytes(plain: Uint8Array): Uint8Array {
+      const iv = backend.randomBytes(12);
+      const { ct, tag } = backend.aesGcmSeal(encKey, iv, plain);
+      const out = new Uint8Array(iv.length + tag.length + ct.length);
+      out.set(iv, 0);
+      out.set(tag, iv.length);
+      out.set(ct, iv.length + tag.length);
+      return out;
+    },
+    decBytes(sealed: Uint8Array): Uint8Array {
+      const iv = sealed.subarray(0, 12);
+      const tag = sealed.subarray(12, 28);
+      const ct = sealed.subarray(28);
+      return backend.aesGcmOpen(encKey, iv, tag, ct);
     },
   };
 }

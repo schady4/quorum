@@ -81,8 +81,22 @@ export interface Presence {
   agents: string[];
 }
 
-export type ClientMsg = Hello | OpFrame | LedgerFrame | CheckpointFrame;
-export type ServerMsg = Welcome | OpFrame | LedgerFrame | CheckpointFrame | Presence | Denied;
+/** either direction: an EPHEMERAL signal — typing state, read receipts, and the
+ *  like. The relay fans it out to the other members and forgets it: never
+ *  stored in the op log, never in a welcome catch-up, never in a saved bond. So
+ *  it's the right channel for transient, high-frequency metadata that must not
+ *  bloat the durable history. `sig` names the kind ("typing", "read", …), `from`
+ *  is the sender's handle, `data` is kind-specific (structural metadata, sent in
+ *  the clear like op ids and handles). */
+export interface Signal {
+  t: "signal";
+  sig: string;
+  from: string;
+  data?: unknown;
+}
+
+export type ClientMsg = Hello | OpFrame | LedgerFrame | CheckpointFrame | Signal;
+export type ServerMsg = Welcome | OpFrame | LedgerFrame | CheckpointFrame | Presence | Denied | Signal;
 
 export function encode(msg: ClientMsg | ServerMsg): string {
   return JSON.stringify(msg);

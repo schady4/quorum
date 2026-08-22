@@ -32,6 +32,9 @@ export interface RoomClientEvents {
   reconnecting: (info: { attempt: number; delayMs: number }) => void;
   /** The relay refused the join (e.g. wrong room key). Terminal — no retry. */
   denied: (reason: string) => void;
+  /** An ephemeral signal from another member (typing, read receipt, …). Never
+   *  persisted — present only while both peers are connected. */
+  signal: (msg: { sig: string; from: string; data?: unknown }) => void;
   close: () => void;
   error: (err: Error) => void;
 }
@@ -226,6 +229,9 @@ export class RoomClient extends Emitter<RoomClientEvents> {
         this.participants = msg.participants;
         this.agents = msg.agents ?? [];
         this.emit("presence", this.participants);
+      } else if (msg.t === "signal") {
+        // Ephemeral — surface it and move on; nothing is applied or persisted.
+        this.emit("signal", { sig: msg.sig, from: msg.from, data: msg.data });
       } else if (msg.t === "denied") {
         // A refused join won't succeed on retry — stop the reconnect loop and
         // surface the reason. Prefer a "denied" listener; fall back to "error".
@@ -316,6 +322,13 @@ export class RoomClient extends Emitter<RoomClientEvents> {
     this.persist("op", op);
     this.emit("update", this.viewEntries());
     if (this.live) this.ws!.send(encode({ t: "op", op }));
+  }
+
+  /** Broadcast an ephemeral signal (typing, read receipt, …) to the room. Fire-
+   *  and-forget: no local echo, nothing persisted, dropped silently if the
+   *  socket isn't open (it's transient — a missed signal just isn't seen). */
+  signal(sig: string, data?: unknown): void {
+    if (this.live) this.ws!.send(encode({ t: "signal", sig, from: this.handle, data }));
   }
 
   /** Replay externally-built frames (e.g. from a saved .qdag bond) onto a room:

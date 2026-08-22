@@ -19,30 +19,30 @@
 // open room (no key) uses the identity transform.
 
 import { backend } from "./crypto-impl.js";
+import { base64, base64urlnopad } from "@scure/base";
+import { utf8ToBytes, bytesToUtf8 } from "@noble/ciphers/utils.js";
 
 const PREFIX = "e1:"; // versioned sealed-blob marker
-const te = new TextEncoder();
-const td = new TextDecoder();
-const utf8 = (s: string): Uint8Array => te.encode(s);
-const fromUtf8 = (b: Uint8Array): string => td.decode(b);
+
+// Bytes<->text via the @noble/@scure isomorphic libraries rather than ambient
+// globals: `TextEncoder`/`TextDecoder` and `btoa`/`atob` aren't reliably present
+// on React Native (Hermes), so we lean on the same pure-JS toolkit that backs
+// the crypto. Outputs are identical to the global implementations, so the wire
+// format is unchanged and a phone interoperates byte-for-byte with Node.
+const utf8 = (s: string): Uint8Array => utf8ToBytes(s);
+const fromUtf8 = (b: Uint8Array): string => bytesToUtf8(b);
 const MASTER_SALT = utf8("quorum/v1");
 
-// Portable base64 (btoa/atob are global on Node and in RN/Hermes). Chunked
-// String.fromCharCode avoids a stack overflow on large blobs.
+/** Standard base64 (padded) — the on-wire sealed-blob encoding. */
 function b64(bytes: Uint8Array): string {
-  let bin = "";
-  const CH = 0x8000;
-  for (let i = 0; i < bytes.length; i += CH) bin += String.fromCharCode(...bytes.subarray(i, i + CH));
-  return btoa(bin);
+  return base64.encode(bytes);
 }
 function unb64(s: string): Uint8Array {
-  const bin = atob(s);
-  const out = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-  return out;
+  return base64.decode(s);
 }
+/** URL-safe, unpadded base64 — used for the relay auth token. */
 function b64url(bytes: Uint8Array): string {
-  return b64(bytes).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  return base64urlnopad.encode(bytes);
 }
 
 export interface RoomCrypto {

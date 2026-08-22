@@ -4,7 +4,7 @@
 // same causal-tree rule that orders characters — the chat stream is just an RGA
 // whose elements are whole messages instead of single characters.
 
-import { EventEmitter } from "node:events";
+import { Emitter } from "./emitter.js";
 import { makeSocket } from "./ws-impl.js";
 import { OPEN, type Socket } from "./socket.js";
 import { createSurface, type CrdtSurface, type Entry, type InsertOp, type Op } from "../core/crdt.js";
@@ -36,7 +36,7 @@ export interface RoomClientEvents {
   error: (err: Error) => void;
 }
 
-export class RoomClient extends EventEmitter {
+export class RoomClient extends Emitter<RoomClientEvents> {
   readonly clientId = newClientId();
   private surface: CrdtSurface = createSurface();
   readonly ledger = new Ledger();

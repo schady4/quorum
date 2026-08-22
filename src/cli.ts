@@ -14,6 +14,7 @@ import { providers, getProvider } from "./providers/index.js";
 import { startRelay } from "./relay/server.js";
 import { deriveAuthToken } from "./net/crypto.js";
 import { readManifest, streamFrames } from "./session/qdag.js";
+import { FileRoomStore } from "./session/store.js";
 import type { RoomClient } from "./net/client.js";
 import { runTui } from "./tui/app.js";
 import { spawnAgent } from "./agent/spawn.js";
@@ -44,8 +45,8 @@ Usage:
   ${cmd("quorum host")} [--port <n>] [--key <secret>] [--open]
                                                Start a relay/room server (default 8787).
                                                Generates a room key unless --open.
-  ${cmd("quorum join")} <room> [--as <handle>] [--relay <url>] [--key <secret>] [--provider <id>] [--model <id>]
-                                               Join a room (provider enables merge arbitration)
+  ${cmd("quorum join")} <room> [--as <handle>] [--relay <url>] [--key <secret>] [--provider <id>] [--model <id>] [--persist]
+                                               Join a room (--persist keeps a local encrypted backup)
   ${cmd("quorum agent")} <room> [--as <handle>] [--key <secret>] [--provider <id>] [--model <id>] [--relay <url>]
                                                Seat an AI participant in a room
   ${cmd("quorum open")} <file.qdag> [--key <secret>] [--relay <url>] [--as <handle>] [--room <name>]
@@ -155,7 +156,11 @@ function join(args: string[]): void {
   const relayUrl = flags.relay ?? "ws://localhost:8787";
   // With a provider, this seat can arbitrate semantic merge collisions.
   const resolver = flags.provider ? createMergeResolver({ providerId: flags.provider, model: flags.model }) : undefined;
-  runTui({ relayUrl, room, handle, key: flags.key, resolver });
+  // --persist keeps a local, encrypted-at-rest copy of the room under
+  // ~/.quorum/rooms, so you keep your history across restarts and can re-seed a
+  // relay that lost its memory.
+  const store = "persist" in flags ? new FileRoomStore() : undefined;
+  runTui({ relayUrl, room, handle, key: flags.key, resolver, store });
 }
 
 async function agent(args: string[]): Promise<void> {

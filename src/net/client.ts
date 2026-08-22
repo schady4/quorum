@@ -6,11 +6,12 @@
 
 import { EventEmitter } from "node:events";
 import { WebSocket } from "ws";
-import { createSurface, type CrdtSurface, type Entry, type InsertOp } from "../core/crdt.js";
+import { createSurface, type CrdtSurface, type Entry, type InsertOp, type Op } from "../core/crdt.js";
 import { Ledger, type LedgerOp, type MergeResolver } from "../core/ledger.js";
 import type { BeliefState } from "../core/dag.js";
-import { decode, encode, type CheckpointOp } from "./protocol.js";
+import { decode, encode, type CheckpointOp, type ClientMsg } from "./protocol.js";
 import { roomCrypto, type RoomCrypto } from "./crypto.js";
+import type { RoomStore, StoredKind } from "../session/store.js";
 
 const NO_IDS: ReadonlySet<string> = new Set();
 
@@ -54,6 +55,14 @@ export class RoomClient extends EventEmitter {
   participants: string[] = [];
   /** The subset of `participants` that are AI seats, per the relay. */
   agents: string[] = [];
+
+  /** Optional durable store. When set, the client loads persisted frames on
+   *  connect, appends every (sealed) frame it sees, and re-seeds the relay with
+   *  anything the relay is missing — so any client is a backup that can restore
+   *  a room the relay lost. Set it before connect(). */
+  store?: RoomStore;
+  private persistedIds = new Set<string>();
+  private storeLoaded = false;
 
   /** Reconnect backoff schedule. Public so callers (and tests) can tune it; the
    *  delay is baseMs * 2^attempt, capped at maxMs, plus up to 20% jitter. */
@@ -122,7 +131,39 @@ export class RoomClient extends EventEmitter {
 
   connect(): void {
     this.closing = false;
+    if (!this.storeLoaded) {
+      this.storeLoaded = true;
+      this.loadFromStore();
+    }
     this.open();
+  }
+
+  /** Append a (sealed) frame to the durable store, once per op id. */
+  private persist(t: StoredKind, op: { id: string }): void {
+    if (!this.store || this.persistedIds.has(op.id)) return;
+    this.persistedIds.add(op.id);
+    this.store.append(this.room, { t, op });
+  }
+
+  /** Apply everything persisted for this room, so the client has its history
+   *  before the relay's welcome (and even offline). Idempotent with the welcome. */
+  private loadFromStore(): void {
+    if (!this.store) return;
+    for (const f of this.store.load(this.room)) {
+      this.persistedIds.add((f.op as { id: string }).id);
+      if (f.t === "op") this.surface.apply(f.op as Op);
+      else if (f.t === "ledger") this.applyLedgerLocal(this.decLedger(f.op as LedgerOp));
+      else if (f.t === "checkpoint") this.applyCheckpoint(f.op as CheckpointOp);
+    }
+  }
+
+  /** After catch-up, push any persisted frames the relay didn't send back — so a
+   *  relay that lost its memory is restored from this client's durable log. */
+  private reseed(have: Set<string>): void {
+    if (!this.store || !this.live) return;
+    for (const f of this.store.load(this.room)) {
+      if (!have.has((f.op as { id: string }).id)) this.ws!.send(encode({ t: f.t, op: f.op } as ClientMsg));
+    }
   }
 
   private open(): void {
@@ -145,24 +186,41 @@ export class RoomClient extends EventEmitter {
       this.sawActivity = true;
       const msg = decode(data.toString());
       if (msg.t === "welcome") {
-        for (const op of msg.ops) this.surface.apply(op);
-        for (const op of msg.ledgerOps) this.applyLedgerLocal(this.decLedger(op));
+        const have = new Set<string>();
+        for (const op of msg.ops) {
+          this.surface.apply(op);
+          this.persist("op", op);
+          have.add(op.id);
+        }
+        for (const op of msg.ledgerOps) {
+          this.applyLedgerLocal(this.decLedger(op));
+          this.persist("ledger", op);
+          have.add(op.id);
+        }
         // Seed progress before the first update fires, so a rejoining seat knows
         // what it already handled before it decides what to answer.
-        for (const op of msg.checkpointOps ?? []) this.applyCheckpoint(op);
+        for (const op of msg.checkpointOps ?? []) {
+          this.applyCheckpoint(op);
+          this.persist("checkpoint", op);
+          have.add(op.id);
+        }
         this.participants = msg.participants;
         this.agents = msg.agents ?? [];
+        this.reseed(have); // restore the relay from our durable log if it lost anything
         this.emit("presence", this.participants);
         this.emit("update", this.viewEntries());
         this.emit("ledger", this.ledger);
       } else if (msg.t === "op") {
         this.surface.apply(msg.op);
+        this.persist("op", msg.op);
         this.emit("update", this.viewEntries());
       } else if (msg.t === "ledger") {
         this.applyLedgerLocal(this.decLedger(msg.op));
+        this.persist("ledger", msg.op);
         this.emit("ledger", this.ledger);
       } else if (msg.t === "checkpoint") {
         this.applyCheckpoint(msg.op);
+        this.persist("checkpoint", msg.op);
         this.emit("checkpoint", msg.op);
       } else if (msg.t === "presence") {
         this.participants = msg.participants;
@@ -252,6 +310,7 @@ export class RoomClient extends EventEmitter {
       author: this.handle,
     };
     this.surface.apply(op);
+    this.persist("op", op);
     this.emit("update", this.viewEntries());
     if (this.live) this.ws!.send(encode({ t: "op", op }));
   }
@@ -265,12 +324,15 @@ export class RoomClient extends EventEmitter {
     for (const op of frames.ops ?? []) {
       const sealed: InsertOp = { ...op, value: this.crypto.enc(op.value) };
       this.surface.apply(sealed);
+      this.persist("op", sealed);
       if (this.live) this.ws!.send(encode({ t: "op", op: sealed }));
     }
     if (frames.ops?.length) this.emit("update", this.viewEntries());
     for (const op of frames.ledgerOps ?? []) {
       this.applyLedgerLocal(op); // the local Ledger holds plaintext
-      if (this.live) this.ws!.send(encode({ t: "ledger", op: this.encLedger(op) }));
+      const wire = this.encLedger(op);
+      this.persist("ledger", wire);
+      if (this.live) this.ws!.send(encode({ t: "ledger", op: wire }));
     }
     if (frames.ledgerOps?.length) this.emit("ledger", this.ledger);
   }
@@ -299,13 +361,16 @@ export class RoomClient extends EventEmitter {
   checkpoint(handled: string): void {
     const op: CheckpointOp = { id: `${this.clientId}:${++this.counter}`, seat: this.handle, handled };
     this.applyCheckpoint(op);
+    this.persist("checkpoint", op);
     if (this.live) this.ws!.send(encode({ t: "checkpoint", op }));
   }
 
   private sendLedger(op: LedgerOp): void {
     this.applyLedgerLocal(op); // the local Ledger + log hold plaintext
+    const wire = this.encLedger(op); // wire + store hold ciphertext
+    this.persist("ledger", wire);
     this.emit("ledger", this.ledger);
-    if (this.live) this.ws!.send(encode({ t: "ledger", op: this.encLedger(op) })); // wire holds ciphertext
+    if (this.live) this.ws!.send(encode({ t: "ledger", op: wire }));
   }
 
   /** Apply a plaintext ledger op to the live Ledger and record it in the

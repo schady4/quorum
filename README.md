@@ -16,7 +16,7 @@ up whichever providers you want.
 > npm so friends install it in one line. Rooms are **secure by default** — one
 > shared key both gates joins and end-to-end encrypts the traffic, so the relay
 > is a zero-knowledge mailbox — and clients **auto-reconnect** through drops.
-> 170 tests across 21 suites. Plan and
+> 175 tests across 22 suites. Plan and
 > architecture live in the sibling repo —
 > [`multiplayer-ai/ROADMAP.md`](https://github.com/schady4/multiplayer-ai/blob/main/ROADMAP.md)
 > ([tracking epic](https://github.com/schady4/multiplayer-ai/issues/8)).
@@ -81,7 +81,7 @@ Inside the interactive prompt, typing `-` for a saved value clears it.
 
 ```
 quorum host [--port <n>] [--key <secret>] [--open]   Start a relay/room server   ✓
-quorum join <room> [--as <h>] [--relay <url>] [--key <s>] [--provider <id>]  Join ✓
+quorum join <room> [--as <h>] [--relay <url>] [--key <s>] [--provider <id>] [--persist]  Join ✓
 quorum agent <room> [--as <h>] [--provider <id>] [--model <id>] [--key <s>]  AI   ✓
 quorum open <file.qdag> [--key <s>] [--relay <url>] [--as <h>]   Revive a save   ✓
 quorum setup                                         Configure providers + keys  ✓
@@ -235,10 +235,11 @@ pipeline instead of another silo.
 Two storage mechanisms sit on the same op-log substrate (details in
 [SAVE-FORMAT.md](SAVE-FORMAT.md)), both encrypted at rest with the room key:
 
-- **`RoomStore`** — continuous per-client durability. A client that holds a
-  store keeps every (sealed) frame it sees, so it survives restarts and can push
-  its log back to **re-seed a relay** that lost its memory. Any client becomes a
-  backup — no server database needed.
+- **`RoomStore`** — continuous per-client durability, wired into `RoomClient`
+  and switched on with `quorum join … --persist`. A persisting client keeps every
+  (sealed) frame it sees, **restores its history on restart** (even before the
+  relay answers, or fully offline), and **re-seeds a relay** that lost its memory.
+  Any client becomes a backup — no server database needed.
 - **The `.qdag` bond** — a small, portable, *revivable* save. It binds the
   roster and the complete decision-DAG (branches, merges, provenance) with the
   message thread; anyone holding the file **and the room key** can revive it into

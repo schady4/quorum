@@ -43,9 +43,17 @@ export interface RelayStore {
   /** Persist a sealed blob; loadBlob returns null when absent. */
   saveBlob(room: string, id: string, bytes: Uint8Array): void;
   loadBlob(room: string, id: string): Uint8Array | null;
+  /** Total bytes of stored blobs for a room (0 when none). */
+  blobBytes(room: string): number;
   /** Per-member push/mute state (empty when none stored). */
   loadMembers(room: string): MemberState;
   saveMembers(room: string, state: MemberState): void;
+}
+
+export interface RelayStoreOptions {
+  /** Cap on total stored blob bytes per room; oldest blobs are evicted past it.
+   *  Evicting a blob just makes that attachment 404 (graceful). Default 256 MB. */
+  maxRoomBlobBytes?: number;
 }
 
 type LogLine =
@@ -58,6 +66,10 @@ type LogLine =
 export class MemoryRelayStore implements RelayStore {
   private logs = new Map<string, LogLine[]>();
   private blobs = new Map<string, Uint8Array>();
+  private maxRoomBlobBytes: number;
+  constructor(opts: RelayStoreOptions = {}) {
+    this.maxRoomBlobBytes = opts.maxRoomBlobBytes ?? 256 * 1024 * 1024;
+  }
   private lines(room: string): LogLine[] {
     let l = this.logs.get(room);
     if (!l) this.logs.set(room, (l = []));
@@ -78,8 +90,24 @@ export class MemoryRelayStore implements RelayStore {
   appendOp(room: string, op: Op): void { this.lines(room).push({ t: "op", op }); }
   appendLedger(room: string, op: LedgerOp): void { this.lines(room).push({ t: "ledger", op }); }
   appendCheckpoint(room: string, op: CheckpointOp): void { this.lines(room).push({ t: "checkpoint", op }); }
-  saveBlob(room: string, id: string, bytes: Uint8Array): void { this.blobs.set(`${room}/${id}`, bytes); }
+  saveBlob(room: string, id: string, bytes: Uint8Array): void {
+    this.blobs.set(`${room}/${id}`, bytes);
+    // Evict oldest (insertion order) for this room past the cap.
+    let total = this.blobBytes(room);
+    if (total <= this.maxRoomBlobBytes) return;
+    for (const key of this.blobs.keys()) {
+      if (key === `${room}/${id}` || !key.startsWith(`${room}/`)) continue;
+      total -= this.blobs.get(key)!.byteLength;
+      this.blobs.delete(key);
+      if (total <= this.maxRoomBlobBytes) break;
+    }
+  }
   loadBlob(room: string, id: string): Uint8Array | null { return this.blobs.get(`${room}/${id}`) ?? null; }
+  blobBytes(room: string): number {
+    let n = 0;
+    for (const [key, bytes] of this.blobs) if (key.startsWith(`${room}/`)) n += bytes.byteLength;
+    return n;
+  }
   private members = new Map<string, MemberState>();
   loadMembers(room: string): MemberState { return this.members.get(room) ?? { ...EMPTY_MEMBERS }; }
   saveMembers(room: string, state: MemberState): void { this.members.set(room, state); }
@@ -88,7 +116,9 @@ export class MemoryRelayStore implements RelayStore {
 /** Disk-backed store. Each room is a directory holding an append-only NDJSON log
  *  (one line per op) and a `blobs/` folder of sealed byte files. */
 export class FileRelayStore implements RelayStore {
-  constructor(private dir: string) {
+  private maxRoomBlobBytes: number;
+  constructor(private dir: string, opts: RelayStoreOptions = {}) {
+    this.maxRoomBlobBytes = opts.maxRoomBlobBytes ?? 256 * 1024 * 1024;
     fs.mkdirSync(dir, { recursive: true });
   }
 
@@ -144,15 +174,40 @@ export class FileRelayStore implements RelayStore {
   appendLedger(room: string, op: LedgerOp): void { this.append(room, { t: "ledger", op }); }
   appendCheckpoint(room: string, op: CheckpointOp): void { this.append(room, { t: "checkpoint", op }); }
 
+  private blobsDir(room: string): string {
+    return path.join(this.roomDir(room), "blobs");
+  }
   saveBlob(room: string, id: string, bytes: Uint8Array): void {
     this.ensureRoom(room);
     const safeId = id.replace(/[^\w.-]/g, "_");
-    fs.writeFileSync(path.join(this.roomDir(room), "blobs", safeId), Buffer.from(bytes));
+    fs.writeFileSync(path.join(this.blobsDir(room), safeId), Buffer.from(bytes));
+    this.evictBlobs(room, safeId);
   }
   loadBlob(room: string, id: string): Uint8Array | null {
     const safeId = id.replace(/[^\w.-]/g, "_");
-    const p = path.join(this.roomDir(room), "blobs", safeId);
+    const p = path.join(this.blobsDir(room), safeId);
     return fs.existsSync(p) ? new Uint8Array(fs.readFileSync(p)) : null;
+  }
+  blobBytes(room: string): number {
+    const d = this.blobsDir(room);
+    if (!fs.existsSync(d)) return 0;
+    let n = 0;
+    for (const f of fs.readdirSync(d)) n += fs.statSync(path.join(d, f)).size;
+    return n;
+  }
+  /** Delete oldest blob files (by mtime) once the room is over its cap, never
+   *  the one just written. */
+  private evictBlobs(room: string, keep: string): void {
+    const d = this.blobsDir(room);
+    if (!fs.existsSync(d)) return;
+    const files = fs.readdirSync(d).map((f) => { const s = fs.statSync(path.join(d, f)); return { f, size: s.size, mtime: s.mtimeMs }; });
+    let total = files.reduce((a, b) => a + b.size, 0);
+    if (total <= this.maxRoomBlobBytes) return;
+    for (const file of files.sort((a, b) => a.mtime - b.mtime)) {
+      if (file.f === keep || total <= this.maxRoomBlobBytes) { if (total <= this.maxRoomBlobBytes) break; else continue; }
+      fs.rmSync(path.join(d, file.f), { force: true });
+      total -= file.size;
+    }
   }
 
   private membersPath(room: string): string {

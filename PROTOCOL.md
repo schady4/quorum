@@ -71,7 +71,10 @@ upload, so the relay stores only opaque ciphertext keyed by its own hash — the
 same zero-knowledge property as the message stream. A chat message then carries
 just a small reference `{ blobId, name, mime, size }`; a receiver `GET`s the
 ciphertext and opens it with the room key. Per-blob and per-room size caps are
-configured on the relay (`maxBlobBytes`, `maxRoomBlobBytes`).
+configured on the relay (`maxBlobBytes`, `maxRoomBlobBytes`). With a persistent
+store, a room's blobs are bounded by the same per-room cap on disk: past it the
+**oldest blobs are evicted**, so an old attachment simply `GET`s a 404 (the
+message still shows its file card) while the durable message log is untouched.
 
 ## Push notifications (disconnected members)
 

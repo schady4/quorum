@@ -182,6 +182,17 @@ export function decodeSave(file: string, key?: string): Session {
   return { room: man.room, created: man.created, roster: man.roster, messages, ledger };
 }
 
+/** Read just a save's manifest — room, roster, and the decrypted ledger DAG —
+ *  without touching the message chunks. Validates the key cheaply (the ledger
+ *  unpack throws on the wrong one), so a caller can check access before streaming. */
+export function readManifest(file: string, key?: string): { room: string; created: number; roster: string[]; ledger: LedgerOpBody[]; sealed: boolean } {
+  const nl = file.indexOf("\n");
+  const firstLine = nl === -1 ? file : file.slice(0, nl);
+  const man = parseManifest(firstLine, key);
+  const ledger = JSON.parse(unpackBody(man.ledger, man.sealed, key, man.room).toString("utf8")) as LedgerOpBody[];
+  return { room: man.room, created: man.created, roster: man.roster, ledger, sealed: man.sealed };
+}
+
 // --- revive ------------------------------------------------------------------
 
 /** Rebuild op frames from an in-memory session, with fresh ids, so a bond can be

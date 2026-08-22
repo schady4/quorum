@@ -9,9 +9,12 @@
 
 import { networkInterfaces } from "node:os";
 import { randomBytes } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { providers, getProvider } from "./providers/index.js";
 import { startRelay } from "./relay/server.js";
 import { deriveAuthToken } from "./net/crypto.js";
+import { readManifest, streamFrames } from "./session/qdag.js";
+import type { RoomClient } from "./net/client.js";
 import { runTui } from "./tui/app.js";
 import { spawnAgent } from "./agent/spawn.js";
 import { createMergeResolver } from "./agent/merge.js";
@@ -45,6 +48,8 @@ Usage:
                                                Join a room (provider enables merge arbitration)
   ${cmd("quorum agent")} <room> [--as <handle>] [--key <secret>] [--provider <id>] [--model <id>] [--relay <url>]
                                                Seat an AI participant in a room
+  ${cmd("quorum open")} <file.qdag> [--key <secret>] [--relay <url>] [--as <handle>] [--room <name>]
+                                               Revive a saved session into a live room
   ${cmd("quorum setup")}                                 Configure model providers + keys (interactive)
   ${cmd("quorum setup --status")}                        Show which providers/keys are configured
   ${cmd("quorum setup --unset")} <provider>              Remove one provider's saved keys
@@ -224,6 +229,64 @@ async function agent(args: string[]): Promise<void> {
   console.error(style.dim(`Delegate: "@${handle} delegate <name> using <provider>/<model> to <task>" spins up another seat.`));
 }
 
+async function open(args: string[]): Promise<void> {
+  const { positionals, flags } = parse(args);
+  const file = positionals[0];
+  if (!file) {
+    console.error("Usage: quorum open <file.qdag> [--key <secret>] [--relay <url>] [--as <handle>] [--room <name>] [--port <n>]");
+    process.exit(1);
+  }
+
+  let raw: string;
+  try {
+    raw = readFileSync(file, "utf8");
+  } catch (e) {
+    console.error(style.err(`cannot read ${file}: ${e instanceof Error ? e.message : String(e)}`));
+    process.exit(1);
+  }
+
+  const key = flags.key;
+  // Validate the key and read the room name up front (no message chunks loaded),
+  // so a wrong/missing key fails here instead of after the window opens.
+  let man;
+  try {
+    man = readManifest(raw, key);
+  } catch (e) {
+    const m = e instanceof Error ? e.message : String(e);
+    // The GCM failure is unreadable ("unable to authenticate data"); a wrong key
+    // (or a tampered file) is the only way to get it, so say that instead.
+    const friendly = /authenticate|bad decrypt|unsupported state/i.test(m) ? "wrong room key, or the file is corrupt" : m;
+    console.error(style.err(`can't open this save: ${friendly}`));
+    process.exit(1);
+  }
+
+  const room = flags.room ?? man.room;
+  const handle = flags.as ?? `guest-${Math.random().toString(36).slice(2, 6)}`;
+  const resolver = flags.provider ? createMergeResolver({ providerId: flags.provider, model: flags.model }) : undefined;
+
+  // Bring the bond back to life: replay its frames into the room once connected.
+  const seed = (client: RoomClient) => streamFrames(raw.split("\n"), { key }, (frames) => client.replay(frames));
+
+  if (flags.relay) {
+    // Revive into a relay someone is already running.
+    runTui({ relayUrl: flags.relay, room, handle, key, resolver, onFirstOpen: seed });
+    return;
+  }
+
+  // Default: host a fresh relay, seed the room, drop into it, and print the
+  // invite so the people who were here can rejoin the revived room.
+  const { port } = await startRelay({ port: Number(flags.port ?? 8787), authToken: deriveAuthToken(key) });
+  const relayUrl = `ws://localhost:${port}`;
+  const keyFlag = key ? ` --key ${key}` : "";
+  const ips = lanAddresses();
+  console.error("");
+  console.error(box([`revived ${style.bold(room)} · ${man.roster.length} were here${key ? " · " + style.ok("🔒 encrypted") : ""}`], { title: `quorum open · :${port}`, stream: process.stderr }));
+  console.error(style.bold("\nOthers can rejoin:"));
+  for (const ip of ips.length ? ips : ["<this-machine-ip>"]) console.error(style.dim(`  quorum join ${room} --relay ws://${ip}:${port}${keyFlag}`));
+  console.error("");
+  runTui({ relayUrl, room, handle, key, resolver, onFirstOpen: seed });
+}
+
 async function main(): Promise<void> {
   switch (cmd) {
     case "providers":
@@ -234,6 +297,9 @@ async function main(): Promise<void> {
       break;
     case "join":
       join(rest);
+      break;
+    case "open":
+      await open(rest);
       break;
     case "agent":
       await agent(rest);

@@ -256,6 +256,25 @@ export class RoomClient extends EventEmitter {
     if (this.live) this.ws!.send(encode({ t: "op", op }));
   }
 
+  /** Replay externally-built frames (e.g. from a saved .qdag bond) onto a room:
+   *  seal each value, apply locally, and broadcast — preserving the *original*
+   *  authors, unlike send() which authors as this client. This is how a bond is
+   *  brought back to life; assumes a fresh room so the frames' after-chain lands
+   *  cleanly. */
+  replay(frames: { ops?: InsertOp[]; ledgerOps?: LedgerOp[] }): void {
+    for (const op of frames.ops ?? []) {
+      const sealed: InsertOp = { ...op, value: this.crypto.enc(op.value) };
+      this.surface.apply(sealed);
+      if (this.live) this.ws!.send(encode({ t: "op", op: sealed }));
+    }
+    if (frames.ops?.length) this.emit("update", this.viewEntries());
+    for (const op of frames.ledgerOps ?? []) {
+      this.applyLedgerLocal(op); // the local Ledger holds plaintext
+      if (this.live) this.ws!.send(encode({ t: "ledger", op: this.encLedger(op) }));
+    }
+    if (frames.ledgerOps?.length) this.emit("ledger", this.ledger);
+  }
+
   entries(): Entry[] {
     return this.viewEntries();
   }

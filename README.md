@@ -16,7 +16,7 @@ up whichever providers you want.
 > npm so friends install it in one line. Rooms are **secure by default** — one
 > shared key both gates joins and end-to-end encrypts the traffic, so the relay
 > is a zero-knowledge mailbox — and clients **auto-reconnect** through drops.
-> 165 tests across 20 suites. Plan and
+> 170 tests across 21 suites. Plan and
 > architecture live in the sibling repo —
 > [`multiplayer-ai/ROADMAP.md`](https://github.com/schady4/multiplayer-ai/blob/main/ROADMAP.md)
 > ([tracking epic](https://github.com/schady4/multiplayer-ai/issues/8)).
@@ -83,6 +83,7 @@ Inside the interactive prompt, typing `-` for a saved value clears it.
 quorum host [--port <n>] [--key <secret>] [--open]   Start a relay/room server   ✓
 quorum join <room> [--as <h>] [--relay <url>] [--key <s>] [--provider <id>]  Join ✓
 quorum agent <room> [--as <h>] [--provider <id>] [--model <id>] [--key <s>]  AI   ✓
+quorum open <file.qdag> [--key <s>] [--relay <url>] [--as <h>]   Revive a save   ✓
 quorum setup                                         Configure providers + keys  ✓
 quorum setup --status | --unset <provider> | --wipe  Inspect / remove / reset    ✓
 quorum providers                                     List installable providers  ✓
@@ -247,9 +248,16 @@ Two storage mechanisms sit on the same op-log substrate (details in
 **Torchbearer save.** When the last human quits a non-empty room (AI seats don't
 hold the torch), the chat window offers to save it before it's gone — `[y/N]`.
 Say yes and it writes a sealed `.qdag` under `~/.quorum/saves/` and prints how to
-bring it back. Everything's exported from the SDK too (`RoomStore`/`FileRoomStore`,
-`encodeSave`/`decodeSave`/`framesFrom`, `isLastHuman`/`saveSessionToDir`); the
-**revive command** (`quorum open <file> --key K`) is the next slice.
+bring it back.
+
+**Revive.** `quorum open <file.qdag> --key <key>` brings a saved room back to
+life: it hosts a fresh relay, replays the bond (streamed, so even a huge save
+stays bounded-memory), drops you into the room with the full history and the
+same decision-DAG — **original authors preserved** — and prints an invite so the
+people who were there can rejoin and pick up where they left off. Point it at an
+existing relay with `--relay`. Everything's exported from the SDK too
+(`RoomStore`/`FileRoomStore`, `encodeSave`/`decodeSave`/`framesFrom`/`streamFrames`,
+`isLastHuman`/`saveSessionToDir`, `RoomClient.replay`).
 
 ## Adding a model provider
 

@@ -45,6 +45,9 @@ interface Room {
   pushTokens: Map<string, Set<string>>;
   /** Per-handle last-push time, to rate-limit notifications. */
   pushCooldown: Map<string, number>;
+  /** Handles that muted this room — skipped by offline-notify. Kept across
+   *  reconnects, so a mute holds even when the app is closed. */
+  muted: Set<string>;
 }
 
 export interface RelayHandle {
@@ -87,7 +90,7 @@ export function startRelay(opts: RelayOptions): Promise<RelayHandle> {
   const room = (name: string): Room => {
     let r = rooms.get(name);
     if (!r) {
-      r = { ops: [], seen: new Set(), ledgerOps: [], ledgerSeen: new Set(), checkpointOps: [], checkpointSeen: new Set(), clients: new Map(), blobs: new Map(), blobBytes: 0, pushTokens: new Map(), pushCooldown: new Map() };
+      r = { ops: [], seen: new Set(), ledgerOps: [], ledgerSeen: new Set(), checkpointOps: [], checkpointSeen: new Set(), clients: new Map(), blobs: new Map(), blobBytes: 0, pushTokens: new Map(), pushCooldown: new Map(), muted: new Set() };
       rooms.set(name, r);
     }
     return r;
@@ -108,6 +111,7 @@ export function startRelay(opts: RelayOptions): Promise<RelayHandle> {
     const msgs: PushMessage[] = [];
     for (const [handle, tokens] of r.pushTokens) {
       if (handle === authorHandle || online.has(handle)) continue; // skip sender + connected
+      if (r.muted.has(handle)) continue; // muted this room
       if (now - (r.pushCooldown.get(handle) ?? 0) < pushCooldownMs) continue; // rate-limit
       r.pushCooldown.set(handle, now);
       for (const to of tokens) {
@@ -355,6 +359,16 @@ export function startRelay(opts: RelayOptions): Promise<RelayHandle> {
             set.add(msg.token);
             joined.pushTokens.set(member.handle, set);
             log(`⤵ push token registered for ${member.handle} on ${joinedName}`);
+          }
+          return;
+        }
+
+        // Mute / unmute this member's push for the room (held across reconnects).
+        if (msg.t === "set-mute" && joined) {
+          const member = joined.clients.get(ws);
+          if (member) {
+            if (msg.muted) joined.muted.add(member.handle);
+            else joined.muted.delete(member.handle);
           }
         }
       });

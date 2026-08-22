@@ -56,6 +56,7 @@ export type {
   Presence,
   Signal,
   RegisterPush,
+  SetMute,
   CheckpointOp,
   ClientMsg,
   ServerMsg,

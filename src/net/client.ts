@@ -69,6 +69,8 @@ export class RoomClient extends Emitter<RoomClientEvents> {
   private storeLoaded = false;
   /** Device push token, re-registered with the relay on each connect. */
   private pushToken?: string;
+  /** Mute state for this room, re-asserted with the relay on each connect. */
+  private muted?: boolean;
 
   /** Reconnect backoff schedule. Public so callers (and tests) can tune it; the
    *  delay is baseMs * 2^attempt, capped at maxMs, plus up to 20% jitter. */
@@ -213,6 +215,7 @@ export class RoomClient extends Emitter<RoomClientEvents> {
         this.agents = msg.agents ?? [];
         this.reseed(have); // restore the relay from our durable log if it lost anything
         this.sendPushRegistration(); // (re)assert our push token now that we're joined
+        this.sendMute(); // (re)assert our mute state for this room
         this.emit("presence", this.participants);
         this.emit("update", this.viewEntries());
         this.emit("ledger", this.ledger);
@@ -344,6 +347,17 @@ export class RoomClient extends Emitter<RoomClientEvents> {
   }
   private sendPushRegistration(): void {
     if (this.pushToken && this.live) this.ws!.send(encode({ t: "register-push", token: this.pushToken }));
+  }
+
+  /** Mute (or unmute) push for this seat in the room. Remembered and re-asserted
+   *  on every (re)connect, so the relay skips notifying a muted member even after
+   *  a reconnect. */
+  setMuted(muted: boolean): void {
+    this.muted = muted;
+    this.sendMute();
+  }
+  private sendMute(): void {
+    if (this.muted !== undefined && this.live) this.ws!.send(encode({ t: "set-mute", muted: this.muted }));
   }
 
   /** Replay externally-built frames (e.g. from a saved .qdag bond) onto a room:

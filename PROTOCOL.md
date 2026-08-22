@@ -38,6 +38,7 @@ Either direction unless noted:
 | `presence`   | `{ participants }`         | server → clients: the roster changed |
 | `signal`     | `{ sig, from, data? }`     | an **ephemeral** signal (typing, read receipt) |
 | `register-push` | `{ token }`             | client → server: a device push token for this member |
+| `set-mute`   | `{ muted }`                | client → server: mute/unmute push for this member in the room |
 
 The relay appends each `op`/`ledger`/`checkpoint` to the room's log (deduped by
 `op.id`) and broadcasts it to the other clients. It never inspects payload
@@ -77,7 +78,11 @@ configured on the relay (`maxBlobBytes`, `maxRoomBlobBytes`).
 A client sends `register-push` with its device push token after joining; the
 relay keeps it keyed by handle + room, across reconnects. When a chat `op`
 arrives, the relay notifies every registered handle that is **not currently
-connected** (and never the sender), rate-limited per handle.
+connected** (and never the sender), rate-limited per handle. A member can send
+`set-mute { muted: true }` to be **skipped** by offline-notify for that room
+(also held across reconnects); the client re-asserts push token and mute state
+on every join. This makes mute hold even when the app is closed — unlike a
+client-only mute, which the OS can't consult before showing a background push.
 
 The push is **content-free by construction**: the relay is zero-knowledge, so it
 can only send metadata it already sees — the sender's handle and the room name

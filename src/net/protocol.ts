@@ -105,7 +105,15 @@ export interface RegisterPush {
   token: string;
 }
 
-export type ClientMsg = Hello | OpFrame | LedgerFrame | CheckpointFrame | Signal | RegisterPush;
+/** client -> server: mute (or unmute) push for this member in the joined room.
+ *  A muted member is skipped by the relay's offline-notify, so the mute holds
+ *  even when the app is closed. Kept across reconnects, keyed by handle. */
+export interface SetMute {
+  t: "set-mute";
+  muted: boolean;
+}
+
+export type ClientMsg = Hello | OpFrame | LedgerFrame | CheckpointFrame | Signal | RegisterPush | SetMute;
 export type ServerMsg = Welcome | OpFrame | LedgerFrame | CheckpointFrame | Presence | Denied | Signal;
 
 export function encode(msg: ClientMsg | ServerMsg): string {

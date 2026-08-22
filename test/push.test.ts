@@ -72,7 +72,32 @@ async function main(): Promise<void> {
   await wait(200);
   check("the sender is never pushed", pushes.every((p) => p.to !== ADA_TOKEN));
 
+  // Relay-side mute: ada mutes, goes offline; bob's message must NOT push her.
+  ada.setMuted(true);
+  await wait(80);
   ada.close();
+  await wait(80);
+  pushes.length = 0;
+  bob.connect();
+  await nextOpen(bob);
+  bob.send("while ada is muted");
+  await wait(200);
+  check("a muted, offline member is NOT pushed", pushes.length === 0);
+
+  // Unmute restores delivery.
+  ada.setMuted(false);
+  ada.connect();
+  await nextOpen(ada);
+  await wait(80);
+  ada.close();
+  await wait(80);
+  pushes.length = 0;
+  bob.send("ada unmuted now");
+  await wait(200);
+  check("unmuting restores push delivery", pushes.some((p) => p.to === ADA_TOKEN));
+
+  ada.close();
+  bob.close();
   await relay.close();
   console.log(`\n${passed} passed, ${failures.length} failed`);
   if (failures.length) process.exit(1);

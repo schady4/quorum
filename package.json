@@ -14,6 +14,13 @@
     },
     "./package.json": "./package.json"
   },
+  "//transport": "React Native (Metro) and web bundlers are redirected from the Node `ws` transport to the platform-WebSocket one, so `ws` and its Node built-ins never reach a mobile/web bundle.",
+  "react-native": {
+    "./dist/net/ws-impl.js": "./dist/net/ws-impl.native.js"
+  },
+  "browser": {
+    "./dist/net/ws-impl.js": "./dist/net/ws-impl.native.js"
+  },
   "bin": {
     "quorum": "./dist/cli.js"
   },

@@ -11,6 +11,7 @@ import type { LedgerOp } from "../core/ledger.js";
 import { decode, encode, type CheckpointOp, type ServerMsg } from "../net/protocol.js";
 import { authMatches } from "../net/crypto.js";
 import { AUTH_HEADER } from "../net/blob.js";
+import { expoPushSender, looksLikeExpoToken, type PushSender, type PushMessage } from "../net/push.js";
 
 /** What the relay tracks per connected socket. */
 interface Member {
@@ -39,6 +40,11 @@ interface Room {
   blobs: Map<string, Uint8Array>;
   /** Running total of stored blob bytes, so a room can be capped. */
   blobBytes: number;
+  /** Device push tokens by handle, kept across disconnects so an offline member
+   *  can be notified of new messages. Metadata only — never content. */
+  pushTokens: Map<string, Set<string>>;
+  /** Per-handle last-push time, to rate-limit notifications. */
+  pushCooldown: Map<string, number>;
 }
 
 export interface RelayHandle {
@@ -62,6 +68,16 @@ export interface RelayOptions {
   maxBlobBytes?: number;
   /** Max total blob bytes retained per room. Default 256 MB. */
   maxRoomBlobBytes?: number;
+  /** Push notifications for disconnected members. On by default; set false to
+   *  disable outbound push entirely. */
+  push?: boolean;
+  /** Override the push delivery (default posts to Expo). Injectable for tests or
+   *  an alternate gateway. */
+  sendPush?: PushSender;
+  /** Endpoint for the default (Expo) push sender. */
+  pushEndpoint?: string;
+  /** Minimum ms between pushes to one handle in a room. Default 10s. */
+  pushCooldownMs?: number;
 }
 
 export function startRelay(opts: RelayOptions): Promise<RelayHandle> {
@@ -71,13 +87,35 @@ export function startRelay(opts: RelayOptions): Promise<RelayHandle> {
   const room = (name: string): Room => {
     let r = rooms.get(name);
     if (!r) {
-      r = { ops: [], seen: new Set(), ledgerOps: [], ledgerSeen: new Set(), checkpointOps: [], checkpointSeen: new Set(), clients: new Map(), blobs: new Map(), blobBytes: 0 };
+      r = { ops: [], seen: new Set(), ledgerOps: [], ledgerSeen: new Set(), checkpointOps: [], checkpointSeen: new Set(), clients: new Map(), blobs: new Map(), blobBytes: 0, pushTokens: new Map(), pushCooldown: new Map() };
       rooms.set(name, r);
     }
     return r;
   };
   const maxBlobBytes = opts.maxBlobBytes ?? 25 * 1024 * 1024;
   const maxRoomBlobBytes = opts.maxRoomBlobBytes ?? 256 * 1024 * 1024;
+
+  // Push delivery for disconnected members. Content-free by construction — the
+  // relay only knows who sent and which room, never what was said.
+  const pushEnabled = opts.push !== false;
+  const pushSender: PushSender = opts.sendPush ?? expoPushSender(opts.pushEndpoint);
+  const pushCooldownMs = opts.pushCooldownMs ?? 10_000;
+
+  const notifyOffline = (r: Room, roomName: string, authorHandle: string): void => {
+    if (!pushEnabled || r.pushTokens.size === 0) return;
+    const online = new Set([...r.clients.values()].map((m) => m.handle));
+    const now = Date.now();
+    const msgs: PushMessage[] = [];
+    for (const [handle, tokens] of r.pushTokens) {
+      if (handle === authorHandle || online.has(handle)) continue; // skip sender + connected
+      if (now - (r.pushCooldown.get(handle) ?? 0) < pushCooldownMs) continue; // rate-limit
+      r.pushCooldown.set(handle, now);
+      for (const to of tokens) {
+        msgs.push({ to, title: roomName, body: `${authorHandle} sent a message`, data: { room: roomName }, sound: "default" });
+      }
+    }
+    if (msgs.length) void pushSender(msgs);
+  };
 
   const send = (ws: WebSocket, msg: ServerMsg) => {
     if (ws.readyState === ws.OPEN) ws.send(encode(msg));
@@ -195,6 +233,7 @@ export function startRelay(opts: RelayOptions): Promise<RelayHandle> {
 
     wss.on("connection", (ws: WebSocket) => {
       let joined: Room | null = null;
+      let joinedName = "";
       alive.set(ws, true);
       ws.on("pong", () => alive.set(ws, true));
 
@@ -236,6 +275,7 @@ export function startRelay(opts: RelayOptions): Promise<RelayHandle> {
 
           r.clients.set(ws, { handle: msg.handle, clientId: msg.clientId, kind: msg.kind === "agent" ? "agent" : "human" });
           joined = r;
+          joinedName = msg.room;
           log(`+ ${msg.handle} joined ${msg.room} (${r.clients.size} here)`);
           send(ws, { t: "welcome", room: msg.room, participants: roster(r), agents: agentRoster(r), ops: r.ops, ledgerOps: r.ledgerOps, checkpointOps: r.checkpointOps });
           broadcast(r, { t: "presence", participants: roster(r), agents: agentRoster(r) });
@@ -248,6 +288,9 @@ export function startRelay(opts: RelayOptions): Promise<RelayHandle> {
           joined.seen.add(op.id);
           joined.ops.push(op);
           broadcast(joined, { t: "op", op }, ws);
+          // Notify any registered members who aren't connected right now.
+          const sender = joined.clients.get(ws)?.handle ?? (op as { author?: string }).author ?? "someone";
+          notifyOffline(joined, joinedName, sender);
           return;
         }
 
@@ -273,6 +316,19 @@ export function startRelay(opts: RelayOptions): Promise<RelayHandle> {
         // forget. Never stored, so they don't appear in a welcome or a save.
         if (msg.t === "signal" && joined) {
           broadcast(joined, { t: "signal", sig: msg.sig, from: msg.from, data: msg.data }, ws);
+          return;
+        }
+
+        // Register a device push token for this member (kept across reconnects,
+        // keyed by handle), so we can notify them while they're disconnected.
+        if (msg.t === "register-push" && joined) {
+          const member = joined.clients.get(ws);
+          if (member && looksLikeExpoToken(msg.token)) {
+            const set = joined.pushTokens.get(member.handle) ?? new Set<string>();
+            set.add(msg.token);
+            joined.pushTokens.set(member.handle, set);
+            log(`⤵ push token registered for ${member.handle} on ${joinedName}`);
+          }
         }
       });
 

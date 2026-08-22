@@ -37,6 +37,7 @@ Either direction unless noted:
 | `checkpoint` | `{ op }`                   | a seat's progress marker |
 | `presence`   | `{ participants }`         | server → clients: the roster changed |
 | `signal`     | `{ sig, from, data? }`     | an **ephemeral** signal (typing, read receipt) |
+| `register-push` | `{ token }`             | client → server: a device push token for this member |
 
 The relay appends each `op`/`ledger`/`checkpoint` to the room's log (deduped by
 `op.id`) and broadcasts it to the other clients. It never inspects payload
@@ -69,6 +70,20 @@ same zero-knowledge property as the message stream. A chat message then carries
 just a small reference `{ blobId, name, mime, size }`; a receiver `GET`s the
 ciphertext and opens it with the room key. Per-blob and per-room size caps are
 configured on the relay (`maxBlobBytes`, `maxRoomBlobBytes`).
+
+## Push notifications (disconnected members)
+
+A client sends `register-push` with its device push token after joining; the
+relay keeps it keyed by handle + room, across reconnects. When a chat `op`
+arrives, the relay notifies every registered handle that is **not currently
+connected** (and never the sender), rate-limited per handle.
+
+The push is **content-free by construction**: the relay is zero-knowledge, so it
+can only send metadata it already sees — the sender's handle and the room name
+(`{ title: room, body: "<handle> sent a message", data: { room } }`), never the
+message text. Delivery defaults to Expo's push API and is injectable
+(`sendPush`) for a different gateway or for tests; set `push: false` to disable
+outbound push entirely.
 
 ### Chat ops (RGA)
 

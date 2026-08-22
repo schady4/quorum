@@ -67,6 +67,8 @@ export class RoomClient extends Emitter<RoomClientEvents> {
   store?: RoomStore;
   private persistedIds = new Set<string>();
   private storeLoaded = false;
+  /** Device push token, re-registered with the relay on each connect. */
+  private pushToken?: string;
 
   /** Reconnect backoff schedule. Public so callers (and tests) can tune it; the
    *  delay is baseMs * 2^attempt, capped at maxMs, plus up to 20% jitter. */
@@ -210,6 +212,7 @@ export class RoomClient extends Emitter<RoomClientEvents> {
         this.participants = msg.participants;
         this.agents = msg.agents ?? [];
         this.reseed(have); // restore the relay from our durable log if it lost anything
+        this.sendPushRegistration(); // (re)assert our push token now that we're joined
         this.emit("presence", this.participants);
         this.emit("update", this.viewEntries());
         this.emit("ledger", this.ledger);
@@ -329,6 +332,17 @@ export class RoomClient extends Emitter<RoomClientEvents> {
    *  socket isn't open (it's transient — a missed signal just isn't seen). */
   signal(sig: string, data?: unknown): void {
     if (this.live) this.ws!.send(encode({ t: "signal", sig, from: this.handle, data }));
+  }
+
+  /** Register a device push token so the relay can notify this seat of new
+   *  messages while it's disconnected. Remembered and re-sent on every
+   *  (re)connect, since the relay keys tokens by handle. */
+  registerPush(token: string): void {
+    this.pushToken = token;
+    this.sendPushRegistration();
+  }
+  private sendPushRegistration(): void {
+    if (this.pushToken && this.live) this.ws!.send(encode({ t: "register-push", token: this.pushToken }));
   }
 
   /** Replay externally-built frames (e.g. from a saved .qdag bond) onto a room:

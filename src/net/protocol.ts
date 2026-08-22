@@ -95,7 +95,17 @@ export interface Signal {
   data?: unknown;
 }
 
-export type ClientMsg = Hello | OpFrame | LedgerFrame | CheckpointFrame | Signal;
+/** client -> server: register a device push token for this member, so the relay
+ *  can notify them of new messages while they're disconnected. The relay keys it
+ *  by the joined handle and room and keeps it across reconnects. It only ever
+ *  pushes metadata (who, which room) — never content, which it can't read. */
+export interface RegisterPush {
+  t: "register-push";
+  /** An Expo push token (ExponentPushToken[…]). */
+  token: string;
+}
+
+export type ClientMsg = Hello | OpFrame | LedgerFrame | CheckpointFrame | Signal | RegisterPush;
 export type ServerMsg = Welcome | OpFrame | LedgerFrame | CheckpointFrame | Presence | Denied | Signal;
 
 export function encode(msg: ClientMsg | ServerMsg): string {

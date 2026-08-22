@@ -40,6 +40,10 @@ export { putBlob, getBlob, blobBaseUrl, blobId, AUTH_HEADER } from "./net/blob.j
 export { expoPushSender, looksLikeExpoToken, EXPO_PUSH_ENDPOINT } from "./net/push.js";
 export type { PushMessage, PushSender } from "./net/push.js";
 
+// --- Room summaries: unread / last-activity across rooms, no socket ----------
+export { roomSummaries } from "./net/summary.js";
+export type { RoomSummary, SummaryResponse } from "./net/summary.js";
+
 // --- The wire protocol (the stable public contract; see PROTOCOL.md) ---------
 export { encode, decode } from "./net/protocol.js";
 export type {

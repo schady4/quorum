@@ -20,6 +20,10 @@ export type { RoomCrypto } from "./net/crypto.js";
 // --- The blob channel: large attachments, sealed, over the relay's store -----
 export { putBlob, getBlob, blobBaseUrl, blobId, AUTH_HEADER } from "./net/blob.js";
 
+// --- Room summaries: unread / last-activity across rooms, no socket ----------
+export { roomSummaries } from "./net/summary.js";
+export type { RoomSummary, SummaryResponse } from "./net/summary.js";
+
 // --- The wire protocol -------------------------------------------------------
 export { encode, decode } from "./net/protocol.js";
 export type {

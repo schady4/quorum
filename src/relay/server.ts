@@ -147,7 +147,34 @@ export function startRelay(opts: RelayOptions): Promise<RelayHandle> {
     cors(res);
     if (req.method === "OPTIONS") { res.writeHead(204).end(); return; }
 
-    const m = /^\/blob\/([^/]+)\/([^/]+)\/?$/.exec((req.url ?? "").split("?")[0]);
+    const path = (req.url ?? "").split("?")[0];
+
+    // GET /rooms/summary?rooms=a,b,c — per-room op count + last activity (metadata
+    // only). Auth-gated by the same room token as the socket.
+    if (req.method === "GET" && path === "/rooms/summary") {
+      if (!authMatches(opts.authToken, req.headers[AUTH_HEADER] as string | undefined)) {
+        res.writeHead(403).end("forbidden");
+        return;
+      }
+      const url = new URL(req.url ?? "", "http://localhost");
+      const names = (url.searchParams.get("rooms") ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+      const out: Record<string, { count: number; lastTs?: number; lastAuthor?: string }> = {};
+      for (const name of names) {
+        const r = rooms.get(name);
+        if (!r) { out[name] = { count: 0 }; continue; }
+        const last = r.ops[r.ops.length - 1];
+        out[name] = {
+          count: r.ops.length,
+          lastTs: last && "ts" in last ? (last as { ts?: number }).ts : undefined,
+          lastAuthor: last && "author" in last ? (last as { author?: string }).author : undefined,
+        };
+      }
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(out));
+      return;
+    }
+
+    const m = /^\/blob\/([^/]+)\/([^/]+)\/?$/.exec(path);
     if (!m) { res.writeHead(404).end(); return; }
     if (!authMatches(opts.authToken, req.headers[AUTH_HEADER] as string | undefined)) {
       res.writeHead(403).end("forbidden");

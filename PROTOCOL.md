@@ -62,6 +62,7 @@ messages (which would bloat the op log):
 |----------------------------|---------|
 | `PUT /blob/:room/:id`      | store sealed bytes (idempotent; `id` = sha256 of the ciphertext) |
 | `GET /blob/:room/:id`      | fetch the sealed bytes |
+| `GET /rooms/summary?rooms=a,b` | per-room `{ count, lastTs?, lastAuthor? }` — activity, no content |
 
 Both require the room auth token in an **`x-quorum-auth`** header (the same gate
 as the socket). The client seals a file's bytes with the room key **before**
@@ -85,14 +86,27 @@ message text. Delivery defaults to Expo's push API and is injectable
 (`sendPush`) for a different gateway or for tests; set `push: false` to disable
 outbound push entirely.
 
+## Room summaries (activity without a socket)
+
+`GET /rooms/summary?rooms=a,b,c` (auth-gated by the `x-quorum-auth` header)
+returns, per room, `{ count, lastTs?, lastAuthor? }` — the op-log length and the
+last op's time + author. A client (a rooms list) compares `count` against the
+count it last saw to badge unread/activity, and uses `lastTs`/`lastAuthor` for a
+"last active" line, all without opening a socket to each room. Metadata only:
+the count includes reaction/edit control ops the relay can't distinguish (treat
+it as activity, not an exact message count), and no message content is ever
+returned.
+
 ### Chat ops (RGA)
 
-`{ type: "insert", id, after, value, author }` — a message is one element in a
-replicated growable array. `after` is the id of the element it follows;
+`{ type: "insert", id, after, value, author, ts? }` — a message is one element in
+a replicated growable array. `after` is the id of the element it follows;
 concurrent inserts at the same point order deterministically by `id`. `apply` is
 idempotent (dedupe by `id`), so replaying the log converges. `value` is the
 message text, **sealed** when the room is keyed (see below). `author` is the
-seat's handle (plaintext — presence is not hidden).
+seat's handle (plaintext — presence is not hidden). `ts` is the author's
+wall-clock send time (epoch ms), **display-only** — ordering is the causal tree,
+never the clock — and optional for back-compat.
 
 ### Ledger ops
 

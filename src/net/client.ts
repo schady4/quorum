@@ -320,6 +320,7 @@ export class RoomClient extends Emitter<RoomClientEvents> {
       after: this.surface.tail(),
       value: this.crypto.enc(text), // ciphertext on the wire and in the surface
       author: this.handle,
+      ts: Date.now(),
     };
     this.surface.apply(op);
     this.persist("op", op);

@@ -31,6 +31,9 @@ export interface InsertOp {
   value: string;
   /** Which replica authored the op (its site id). */
   author: string;
+  /** Wall-clock time the author created the op (epoch ms). Display-only —
+   *  ordering is the causal tree, not the clock. Optional for back-compat. */
+  ts?: number;
 }
 
 export interface DeleteOp {
@@ -46,6 +49,7 @@ interface Node {
   after: OpId;
   author: string;
   deleted: boolean;
+  ts?: number;
 }
 
 /** A visible element in sequence order. For the chat stream, one per message. */
@@ -53,6 +57,8 @@ export interface Entry {
   id: OpId;
   value: string;
   author: string;
+  /** Author's wall-clock time (epoch ms), when the op carried one. */
+  ts?: number;
 }
 
 export interface CrdtSurface {
@@ -86,6 +92,7 @@ class Surface implements CrdtSurface {
       after: op.after,
       author: op.author,
       deleted: false,
+      ts: op.ts,
     });
 
     // Register under its parent, holding the sibling list in a fixed total
@@ -128,7 +135,7 @@ class Surface implements CrdtSurface {
   entries(): Entry[] {
     return this.walk()
       .filter((n) => !n.deleted)
-      .map((n) => ({ id: n.id, value: n.value, author: n.author }));
+      .map((n) => ({ id: n.id, value: n.value, author: n.author, ts: n.ts }));
   }
 
   visibleIds(): OpId[] {

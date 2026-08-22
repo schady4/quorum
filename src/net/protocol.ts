@@ -30,6 +30,9 @@ export interface Hello {
    *  relay tell a reconnect (same id reclaims its handle) from a collision (a
    *  different client wanting a handle that's already live). */
   clientId?: string;
+  /** Whether this seat is a human or an AI participant. Drives "last human out"
+   *  detection — the torch is held by humans. Defaults to human when omitted. */
+  kind?: "human" | "agent";
 }
 
 /** server -> client: the join was refused (e.g. wrong or missing room key).
@@ -44,6 +47,9 @@ export interface Welcome {
   t: "welcome";
   room: string;
   participants: string[];
+  /** The subset of `participants` that are AI seats — so a client can tell who
+   *  the humans are (participants minus agents). */
+  agents: string[];
   ops: Op[];
   ledgerOps: LedgerOp[];
   checkpointOps: CheckpointOp[];
@@ -71,6 +77,8 @@ export interface CheckpointFrame {
 export interface Presence {
   t: "presence";
   participants: string[];
+  /** The subset of `participants` that are AI seats. */
+  agents: string[];
 }
 
 export type ClientMsg = Hello | OpFrame | LedgerFrame | CheckpointFrame;

@@ -87,3 +87,4 @@ export { MemoryRoomStore, FileRoomStore } from "./session/store.js";
 export type { RoomStore, StoredFrame, StoredKind } from "./session/store.js";
 export { encodeSave, decodeSave, writeSave, framesFrom, streamFrames, sessionFromClient } from "./session/qdag.js";
 export type { Session, LedgerOpBody, SessionSource, SaveOptions } from "./session/qdag.js";
+export { humansAmong, isLastHuman, savePrompt, saveFilename, defaultSaveDir, reviveHint, writeSessionFile, saveSessionToDir } from "./session/torchbearer.js";

@@ -52,6 +52,8 @@ export class RoomClient extends EventEmitter {
   private counter = 0;
   private ws: WebSocket | null = null;
   participants: string[] = [];
+  /** The subset of `participants` that are AI seats, per the relay. */
+  agents: string[] = [];
 
   /** Reconnect backoff schedule. Public so callers (and tests) can tune it; the
    *  delay is baseMs * 2^attempt, capped at maxMs, plus up to 20% jitter. */
@@ -75,6 +77,9 @@ export class RoomClient extends EventEmitter {
     /** Shared room secret. Derives the relay auth token and the E2E encryption
      *  key; never sent to the relay itself. Omit against an open relay. */
     readonly key?: string,
+    /** Human or AI seat — reported to the relay so a human client can tell when
+     *  it's the last one out (the torch is held by humans). */
+    readonly kind: "human" | "agent" = "human",
   ) {
     super();
     this.crypto = roomCrypto(key, room);
@@ -126,7 +131,7 @@ export class RoomClient extends EventEmitter {
 
     ws.on("open", () => {
       this.attempt = 0; // a successful connection resets the backoff
-      ws.send(encode({ t: "hello", room: this.room, handle: this.handle, auth: this.crypto.authToken, clientId: this.clientId }));
+      ws.send(encode({ t: "hello", room: this.room, handle: this.handle, auth: this.crypto.authToken, clientId: this.clientId, kind: this.kind }));
       this.startHeartbeat();
       this.emit("open");
     });
@@ -146,6 +151,7 @@ export class RoomClient extends EventEmitter {
         // what it already handled before it decides what to answer.
         for (const op of msg.checkpointOps ?? []) this.applyCheckpoint(op);
         this.participants = msg.participants;
+        this.agents = msg.agents ?? [];
         this.emit("presence", this.participants);
         this.emit("update", this.viewEntries());
         this.emit("ledger", this.ledger);
@@ -160,6 +166,7 @@ export class RoomClient extends EventEmitter {
         this.emit("checkpoint", msg.op);
       } else if (msg.t === "presence") {
         this.participants = msg.participants;
+        this.agents = msg.agents ?? [];
         this.emit("presence", this.participants);
       } else if (msg.t === "denied") {
         // A refused join won't succeed on retry — stop the reconnect loop and

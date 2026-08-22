@@ -67,7 +67,7 @@ export class AgentSeat {
   private trigger: TriggerPolicy;
 
   constructor(private readonly opts: AgentSeatOptions) {
-    this.client = new RoomClient(opts.relayUrl, opts.room, opts.handle, opts.key);
+    this.client = new RoomClient(opts.relayUrl, opts.room, opts.handle, opts.key, "agent");
     this.trigger = opts.shouldRespond ?? mentionTrigger;
     this.client.on("update", (entries: Entry[]) => {
       void this.onUpdate(entries);

@@ -514,10 +514,14 @@ export interface RoomViewProps {
   handle: string;
   key?: string;
   resolver?: MergeResolver;
+  /** Called once, when the client first connects — used by `quorum open` to
+   *  replay a saved bond into the freshly created room. */
+  onFirstOpen?: (client: RoomClient) => void;
 }
 
-export function runTui({ relayUrl, room, handle, key, resolver }: RoomViewProps): void {
+export function runTui({ relayUrl, room, handle, key, resolver, onFirstOpen }: RoomViewProps): void {
   const client = new RoomClient(relayUrl, room, handle, key);
+  if (onFirstOpen) client.once("open", () => onFirstOpen(client));
   client.connect();
   render(<App client={client} resolver={resolver} />);
 }

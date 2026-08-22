@@ -44,6 +44,14 @@ The relay appends each `op`/`ledger`/`checkpoint` to the room's log (deduped by
 `op.id`) and broadcasts it to the other clients. It never inspects payload
 content.
 
+**Retention compaction.** With a persistent store, an optional `maxOpsPerRoom`
+keeps only the last N messages: the relay materializes the room's converged
+sequence, keeps the last N (preserving their op ids and sealed values), and
+re-anchors them into a fresh linear chain. This runs **only while a room is
+quiescent** — on boot and when the last member leaves — never on a live room, so
+no connected replica can diverge from a rewrite. New joiners then catch up to
+just the retained window.
+
 ### Signals (ephemeral)
 
 A `signal` is fanned out to the other members and then **forgotten** — never

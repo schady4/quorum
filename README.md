@@ -16,7 +16,7 @@ up whichever providers you want.
 > npm so friends install it in one line. Rooms are **secure by default** — one
 > shared key both gates joins and end-to-end encrypts the traffic, so the relay
 > is a zero-knowledge mailbox — and clients **auto-reconnect** through drops.
-> 223 tests across 28 suites. Plan and
+> 231 tests across 29 suites. Plan and
 > architecture live in the sibling repo —
 > [`multiplayer-ai/ROADMAP.md`](https://github.com/schady4/multiplayer-ai/blob/main/ROADMAP.md)
 > ([tracking epic](https://github.com/schady4/multiplayer-ai/issues/8)).
@@ -80,7 +80,7 @@ Inside the interactive prompt, typing `-` for a saved value clears it.
 ## Commands
 
 ```
-quorum host [--port <n>] [--key <secret>] [--open] [--persist [dir]]  Relay server ✓
+quorum host [--port <n>] [--key <secret>] [--open] [--persist [dir]] [--retain <n>]  Relay ✓
 quorum join <room> [--as <h>] [--relay <url>] [--key <s>] [--provider <id>] [--persist]  Join ✓
 quorum agent <room> [--as <h>] [--provider <id>] [--model <id>] [--key <s>]  AI   ✓
 quorum open <file.qdag> [--key <s>] [--relay <url>] [--as <h>]   Revive a save   ✓

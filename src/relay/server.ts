@@ -6,7 +6,7 @@
 
 import http from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
-import type { Op } from "../core/crdt.js";
+import { createSurface, ROOT, type Op } from "../core/crdt.js";
 import type { LedgerOp } from "../core/ledger.js";
 import { decode, encode, type CheckpointOp, type ServerMsg } from "../net/protocol.js";
 import { authMatches } from "../net/crypto.js";
@@ -85,6 +85,11 @@ export interface RelayOptions {
   /** Durable storage. When set, op logs and blobs are persisted and reloaded on
    *  boot, so a room survives a relay restart even with no members online. */
   store?: RelayStore;
+  /** Retention: keep only the last N chat messages per room. Older messages are
+   *  compacted away, but ONLY while a room is quiescent (no connected members) —
+   *  on boot and when a room empties — so no live replica can diverge. Undefined
+   *  = keep everything. */
+  maxOpsPerRoom?: number;
 }
 
 export function startRelay(opts: RelayOptions): Promise<RelayHandle> {
@@ -102,6 +107,35 @@ export function startRelay(opts: RelayOptions): Promise<RelayHandle> {
   const maxBlobBytes = opts.maxBlobBytes ?? 25 * 1024 * 1024;
   const maxRoomBlobBytes = opts.maxRoomBlobBytes ?? 256 * 1024 * 1024;
   const store = opts.store;
+
+  const maxOpsPerRoom = opts.maxOpsPerRoom;
+
+  // Compact a room to its last N messages. SAFE ONLY WHEN THE ROOM IS QUIESCENT
+  // (no connected members) — on boot or when a room empties — because it drops
+  // old ops and re-anchors the survivors into a fresh linear chain; a live
+  // replica holding the old structure would diverge. Op ids and sealed values
+  // are preserved, so the relay stays zero-knowledge and returning clients still
+  // dedupe by id.
+  const compactRoom = (name: string, r: Room): void => {
+    if (!store || !maxOpsPerRoom || r.clients.size > 0 || r.ops.length <= maxOpsPerRoom) return;
+    const surface = createSurface();
+    for (const op of r.ops) surface.apply(op);
+    const keep = surface.entries().slice(-maxOpsPerRoom); // last N in converged order
+    const newOps: Op[] = [];
+    let after = ROOT;
+    for (const e of keep) {
+      newOps.push({ type: "insert", id: e.id, after, value: e.value, author: e.author, ts: e.ts });
+      after = e.id;
+    }
+    const keptIds = new Set(newOps.map((o) => o.id));
+    const newCheckpoints = r.checkpointOps.filter((c) => keptIds.has(c.handled));
+    r.ops = newOps;
+    r.seen = new Set(keptIds);
+    r.checkpointOps = newCheckpoints;
+    r.checkpointSeen = new Set(newCheckpoints.map((o) => o.id));
+    store.replaceLog(name, { ops: newOps, ledgerOps: r.ledgerOps, checkpointOps: newCheckpoints });
+    log(`⟲ compacted ${name} to last ${newOps.length} messages`);
+  };
 
   /** Persist a room's per-member push/mute state (small; rewritten on change). */
   const persistMembers = (name: string, r: Room): void => {
@@ -126,6 +160,8 @@ export function startRelay(opts: RelayOptions): Promise<RelayHandle> {
       // Restore the blob byte counter so the in-memory PUT cap is accurate after
       // a restart (blobs themselves load lazily from the store on GET).
       r.blobBytes = store.blobBytes(name);
+      // Compact now, while the room is quiescent (nobody's connected yet).
+      compactRoom(name, r);
     }
   }
 
@@ -418,6 +454,8 @@ export function startRelay(opts: RelayOptions): Promise<RelayHandle> {
         if (!joined) return;
         joined.clients.delete(ws);
         broadcast(joined, { t: "presence", participants: roster(joined), agents: agentRoster(joined) });
+        // The room may now be empty — a safe moment to compact old history.
+        if (joined.clients.size === 0) compactRoom(joinedName, joined);
       });
     });
   });

@@ -123,9 +123,14 @@ async function host(args: string[]): Promise<void> {
   // can gate joins but can't decrypt the end-to-end-encrypted traffic.
   const spinner = new Spinner("starting relay");
   spinner.start();
-  const { port } = await startRelay({ port: requested, authToken: deriveAuthToken(key), verbose: true, store });
+  // Retention: keep only the last N messages per room (compacted while a room is
+  // empty). Off unless a positive --retain is given.
+  const maxOpsPerRoom = flags.retain ? Math.max(1, Number(flags.retain)) || undefined : undefined;
+
+  const { port } = await startRelay({ port: requested, authToken: deriveAuthToken(key), verbose: true, store, maxOpsPerRoom });
   spinner.stop();
   if (persistDir) console.error(style.dim(`  persisting to ${persistDir}`));
+  if (maxOpsPerRoom) console.error(style.dim(`  retaining the last ${maxOpsPerRoom} messages per room`));
 
   const ips = lanAddresses();
   const keyFlag = key ? ` --key ${key}` : "";

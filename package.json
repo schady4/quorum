@@ -81,7 +81,8 @@
     "test:blob": "tsx test/blob.test.ts",
     "test:push": "tsx test/push.test.ts",
     "test:summary": "tsx test/summary.test.ts",
-    "test:all": "npm run test && npm run test:net && npm run test:agent && npm run test:delegate && npm run test:ledger && npm run test:session && npm run test:config && npm run test:router && npm run test:responder && npm run test:durable && npm run test:reconnect && npm run test:auth && npm run test:keepalive && npm run test:e2e && npm run test:vanish && npm run test:tui && npm run test:style && npm run test:sdk && npm run test:persist && npm run test:torchbearer && npm run test:revive && npm run test:restore && npm run test:native && npm run test:signal && npm run test:blob && npm run test:push && npm run test:summary",
+    "test:relaypersist": "tsx test/relaypersist.test.ts",
+    "test:all": "npm run test && npm run test:net && npm run test:agent && npm run test:delegate && npm run test:ledger && npm run test:session && npm run test:config && npm run test:router && npm run test:responder && npm run test:durable && npm run test:reconnect && npm run test:auth && npm run test:keepalive && npm run test:e2e && npm run test:vanish && npm run test:tui && npm run test:style && npm run test:sdk && npm run test:persist && npm run test:torchbearer && npm run test:revive && npm run test:restore && npm run test:native && npm run test:signal && npm run test:blob && npm run test:push && npm run test:summary && npm run test:relaypersist",
     "typecheck": "tsc --noEmit",
     "test:restore": "tsx test/restore.test.ts"
   },

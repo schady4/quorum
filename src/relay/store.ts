@@ -40,6 +40,8 @@ export interface RelayStore {
   appendOp(room: string, op: Op): void;
   appendLedger(room: string, op: LedgerOp): void;
   appendCheckpoint(room: string, op: CheckpointOp): void;
+  /** Replace a room's whole log — used by compaction to truncate old history. */
+  replaceLog(room: string, log: RoomLog): void;
   /** Persist a sealed blob; loadBlob returns null when absent. */
   saveBlob(room: string, id: string, bytes: Uint8Array): void;
   loadBlob(room: string, id: string): Uint8Array | null;
@@ -90,6 +92,13 @@ export class MemoryRelayStore implements RelayStore {
   appendOp(room: string, op: Op): void { this.lines(room).push({ t: "op", op }); }
   appendLedger(room: string, op: LedgerOp): void { this.lines(room).push({ t: "ledger", op }); }
   appendCheckpoint(room: string, op: CheckpointOp): void { this.lines(room).push({ t: "checkpoint", op }); }
+  replaceLog(room: string, log: RoomLog): void {
+    this.logs.set(room, [
+      ...log.ops.map((op): LogLine => ({ t: "op", op })),
+      ...log.ledgerOps.map((op): LogLine => ({ t: "ledger", op })),
+      ...log.checkpointOps.map((op): LogLine => ({ t: "checkpoint", op })),
+    ]);
+  }
   saveBlob(room: string, id: string, bytes: Uint8Array): void {
     this.blobs.set(`${room}/${id}`, bytes);
     // Evict oldest (insertion order) for this room past the cap.
@@ -173,6 +182,15 @@ export class FileRelayStore implements RelayStore {
   appendOp(room: string, op: Op): void { this.append(room, { t: "op", op }); }
   appendLedger(room: string, op: LedgerOp): void { this.append(room, { t: "ledger", op }); }
   appendCheckpoint(room: string, op: CheckpointOp): void { this.append(room, { t: "checkpoint", op }); }
+  replaceLog(room: string, log: RoomLog): void {
+    this.ensureRoom(room);
+    const lines: LogLine[] = [
+      ...log.ops.map((op): LogLine => ({ t: "op", op })),
+      ...log.ledgerOps.map((op): LogLine => ({ t: "ledger", op })),
+      ...log.checkpointOps.map((op): LogLine => ({ t: "checkpoint", op })),
+    ];
+    fs.writeFileSync(this.logPath(room), lines.map((l) => JSON.stringify(l)).join("\n") + (lines.length ? "\n" : ""));
+  }
 
   private blobsDir(room: string): string {
     return path.join(this.roomDir(room), "blobs");

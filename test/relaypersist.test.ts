@@ -13,6 +13,7 @@ import { RoomClient } from "../src/net/client.js";
 import { FileRelayStore } from "../src/relay/store.js";
 import { deriveAuthToken, roomCrypto } from "../src/net/crypto.js";
 import { putBlob, getBlob, blobBaseUrl } from "../src/net/blob.js";
+import type { PushMessage } from "../src/net/push.js";
 
 let passed = 0;
 const failures: string[] = [];
@@ -30,12 +31,14 @@ async function waitUntil(cond: () => boolean, timeoutMs = 3000): Promise<boolean
 
 const SECRET = "correct horse battery";
 const CHAT = "persist me across a restart";
+const ADA_TOKEN = "ExponentPushToken[ada-device]";
+const CASS_TOKEN = "ExponentPushToken[cass-device]";
 
 async function main(): Promise<void> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "quorum-relay-"));
   const token = deriveAuthToken(SECRET);
 
-  // --- session 1: write history + a blob, then stop the relay ---------------
+  // --- session 1: write history + a blob, register push/mute, then stop -----
   const store1 = new FileRelayStore(dir);
   const relay1 = await startRelay({ port: 0, authToken: token, store: store1 });
   const base1 = blobBaseUrl(`ws://localhost:${relay1.port}`);
@@ -45,14 +48,26 @@ async function main(): Promise<void> {
   ada.on("error", () => {});
   ada.connect();
   await nextOpen(ada);
+  ada.registerPush(ADA_TOKEN); // ada wants pushes, unmuted
   ada.send(CHAT);
   ada.send("second line");
   await waitUntil(() => ada.entries().length === 2);
+
+  // cass registers a token but mutes the room — both should persist.
+  const cass = new RoomClient(`ws://localhost:${relay1.port}`, "lobby", "cass", SECRET);
+  cass.on("error", () => {});
+  cass.connect();
+  await nextOpen(cass);
+  cass.registerPush(CASS_TOKEN);
+  cass.setMuted(true);
+  await wait(80);
 
   const sealed = crypto.encBytes(new Uint8Array([1, 2, 3, 4, 5]));
   const blobId = await putBlob(base1, "lobby", sealed, token);
 
   ada.close();
+  cass.close();
+  await wait(80);
   await relay1.close(); // relay is gone; only the store on disk remains
 
   // The store on disk holds ciphertext, not plaintext.
@@ -60,8 +75,9 @@ async function main(): Promise<void> {
   check("the persisted log is ciphertext (no plaintext leaked)", !onDisk.includes(CHAT));
 
   // --- session 2: fresh relay on the SAME store -----------------------------
+  const pushes: PushMessage[] = [];
   const store2 = new FileRelayStore(dir);
-  const relay2 = await startRelay({ port: 0, authToken: token, store: store2 });
+  const relay2 = await startRelay({ port: 0, authToken: token, store: store2, pushCooldownMs: 0, sendPush: async (m) => { pushes.push(...m); } });
   const base2 = blobBaseUrl(`ws://localhost:${relay2.port}`);
 
   // A brand-new joiner (who was never here before) catches up to the history.
@@ -79,6 +95,14 @@ async function main(): Promise<void> {
   const fetched = await getBlob(base2, "lobby", blobId, token);
   const opened = crypto.decBytes(fetched);
   check("a blob uploaded before the restart is still fetchable", opened.length === 5 && opened[0] === 1 && opened[4] === 5);
+
+  // ada and cass are offline across the restart, but their push/mute state was
+  // persisted: bob's message pushes ada (reloaded token) and skips muted cass.
+  bob.send("anyone around?");
+  await waitUntil(() => pushes.length > 0);
+  await wait(100);
+  check("a persisted push token still reaches an offline member after restart", pushes.some((p) => p.to === ADA_TOKEN));
+  check("a persisted mute still suppresses push after restart", pushes.every((p) => p.to !== CASS_TOKEN));
 
   bob.close();
   await relay2.close();

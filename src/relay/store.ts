@@ -21,6 +21,17 @@ export interface RoomLog {
   checkpointOps: CheckpointOp[];
 }
 
+/** Per-member push/mute state — persisted so a member who's offline across a
+ *  relay restart is still reachable (and still muted if they chose to be). */
+export interface MemberState {
+  /** handle -> device push tokens. */
+  pushTokens: Record<string, string[]>;
+  /** handles that muted the room. */
+  muted: string[];
+}
+
+const EMPTY_MEMBERS: MemberState = { pushTokens: {}, muted: [] };
+
 export interface RelayStore {
   /** Room names that have persisted state (so the relay can preload them). */
   rooms(): string[];
@@ -32,6 +43,9 @@ export interface RelayStore {
   /** Persist a sealed blob; loadBlob returns null when absent. */
   saveBlob(room: string, id: string, bytes: Uint8Array): void;
   loadBlob(room: string, id: string): Uint8Array | null;
+  /** Per-member push/mute state (empty when none stored). */
+  loadMembers(room: string): MemberState;
+  saveMembers(room: string, state: MemberState): void;
 }
 
 type LogLine =
@@ -66,6 +80,9 @@ export class MemoryRelayStore implements RelayStore {
   appendCheckpoint(room: string, op: CheckpointOp): void { this.lines(room).push({ t: "checkpoint", op }); }
   saveBlob(room: string, id: string, bytes: Uint8Array): void { this.blobs.set(`${room}/${id}`, bytes); }
   loadBlob(room: string, id: string): Uint8Array | null { return this.blobs.get(`${room}/${id}`) ?? null; }
+  private members = new Map<string, MemberState>();
+  loadMembers(room: string): MemberState { return this.members.get(room) ?? { ...EMPTY_MEMBERS }; }
+  saveMembers(room: string, state: MemberState): void { this.members.set(room, state); }
 }
 
 /** Disk-backed store. Each room is a directory holding an append-only NDJSON log
@@ -136,5 +153,23 @@ export class FileRelayStore implements RelayStore {
     const safeId = id.replace(/[^\w.-]/g, "_");
     const p = path.join(this.roomDir(room), "blobs", safeId);
     return fs.existsSync(p) ? new Uint8Array(fs.readFileSync(p)) : null;
+  }
+
+  private membersPath(room: string): string {
+    return path.join(this.roomDir(room), "members.json");
+  }
+  loadMembers(room: string): MemberState {
+    const p = this.membersPath(room);
+    if (!fs.existsSync(p)) return { ...EMPTY_MEMBERS };
+    try {
+      const parsed = JSON.parse(fs.readFileSync(p, "utf8")) as Partial<MemberState>;
+      return { pushTokens: parsed.pushTokens ?? {}, muted: parsed.muted ?? [] };
+    } catch {
+      return { ...EMPTY_MEMBERS };
+    }
+  }
+  saveMembers(room: string, state: MemberState): void {
+    this.ensureRoom(room);
+    fs.writeFileSync(this.membersPath(room), JSON.stringify(state));
   }
 }

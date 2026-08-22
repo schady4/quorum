@@ -103,7 +103,16 @@ export function startRelay(opts: RelayOptions): Promise<RelayHandle> {
   const maxRoomBlobBytes = opts.maxRoomBlobBytes ?? 256 * 1024 * 1024;
   const store = opts.store;
 
-  // Reload persisted rooms so history survives a restart even with nobody online.
+  /** Persist a room's per-member push/mute state (small; rewritten on change). */
+  const persistMembers = (name: string, r: Room): void => {
+    if (!store) return;
+    const pushTokens: Record<string, string[]> = {};
+    for (const [handle, set] of r.pushTokens) pushTokens[handle] = [...set];
+    store.saveMembers(name, { pushTokens, muted: [...r.muted] });
+  };
+
+  // Reload persisted rooms so history — and offline members' push/mute state —
+  // survives a restart even with nobody online.
   if (store) {
     for (const name of store.rooms()) {
       const r = room(name);
@@ -111,6 +120,9 @@ export function startRelay(opts: RelayOptions): Promise<RelayHandle> {
       for (const op of log.ops) if (!r.seen.has(op.id)) { r.seen.add(op.id); r.ops.push(op); }
       for (const op of log.ledgerOps) if (!r.ledgerSeen.has(op.id)) { r.ledgerSeen.add(op.id); r.ledgerOps.push(op); }
       for (const op of log.checkpointOps) if (!r.checkpointSeen.has(op.id)) { r.checkpointSeen.add(op.id); r.checkpointOps.push(op); }
+      const members = store.loadMembers(name);
+      for (const [handle, tokens] of Object.entries(members.pushTokens)) r.pushTokens.set(handle, new Set(tokens));
+      for (const handle of members.muted) r.muted.add(handle);
     }
   }
 
@@ -382,6 +394,7 @@ export function startRelay(opts: RelayOptions): Promise<RelayHandle> {
             const set = joined.pushTokens.get(member.handle) ?? new Set<string>();
             set.add(msg.token);
             joined.pushTokens.set(member.handle, set);
+            persistMembers(joinedName, joined);
             log(`⤵ push token registered for ${member.handle} on ${joinedName}`);
           }
           return;
@@ -393,6 +406,7 @@ export function startRelay(opts: RelayOptions): Promise<RelayHandle> {
           if (member) {
             if (msg.muted) joined.muted.add(member.handle);
             else joined.muted.delete(member.handle);
+            persistMembers(joinedName, joined);
           }
         }
       });

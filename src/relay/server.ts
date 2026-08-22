@@ -12,6 +12,7 @@ import { decode, encode, type CheckpointOp, type ServerMsg } from "../net/protoc
 import { authMatches } from "../net/crypto.js";
 import { AUTH_HEADER } from "../net/blob.js";
 import { expoPushSender, looksLikeExpoToken, type PushSender, type PushMessage } from "../net/push.js";
+import type { RelayStore } from "./store.js";
 
 /** What the relay tracks per connected socket. */
 interface Member {
@@ -81,6 +82,9 @@ export interface RelayOptions {
   pushEndpoint?: string;
   /** Minimum ms between pushes to one handle in a room. Default 10s. */
   pushCooldownMs?: number;
+  /** Durable storage. When set, op logs and blobs are persisted and reloaded on
+   *  boot, so a room survives a relay restart even with no members online. */
+  store?: RelayStore;
 }
 
 export function startRelay(opts: RelayOptions): Promise<RelayHandle> {
@@ -97,6 +101,18 @@ export function startRelay(opts: RelayOptions): Promise<RelayHandle> {
   };
   const maxBlobBytes = opts.maxBlobBytes ?? 25 * 1024 * 1024;
   const maxRoomBlobBytes = opts.maxRoomBlobBytes ?? 256 * 1024 * 1024;
+  const store = opts.store;
+
+  // Reload persisted rooms so history survives a restart even with nobody online.
+  if (store) {
+    for (const name of store.rooms()) {
+      const r = room(name);
+      const log = store.load(name);
+      for (const op of log.ops) if (!r.seen.has(op.id)) { r.seen.add(op.id); r.ops.push(op); }
+      for (const op of log.ledgerOps) if (!r.ledgerSeen.has(op.id)) { r.ledgerSeen.add(op.id); r.ledgerOps.push(op); }
+      for (const op of log.checkpointOps) if (!r.checkpointSeen.has(op.id)) { r.checkpointSeen.add(op.id); r.checkpointOps.push(op); }
+    }
+  }
 
   // Push delivery for disconnected members. Content-free by construction — the
   // relay only knows who sent and which room, never what was said.
@@ -188,7 +204,11 @@ export function startRelay(opts: RelayOptions): Promise<RelayHandle> {
     const id = decodeURIComponent(m[2]);
 
     if (req.method === "GET") {
-      const bytes = rooms.get(roomName)?.blobs.get(id);
+      let bytes = rooms.get(roomName)?.blobs.get(id);
+      if (!bytes && store) {
+        const loaded = store.loadBlob(roomName, id); // reload after a restart
+        if (loaded) { bytes = loaded; room(roomName).blobs.set(id, loaded); }
+      }
       if (!bytes) { res.writeHead(404).end(); return; }
       res.writeHead(200, { "content-type": "application/octet-stream", "content-length": String(bytes.byteLength) });
       res.end(Buffer.from(bytes));
@@ -217,6 +237,7 @@ export function startRelay(opts: RelayOptions): Promise<RelayHandle> {
         const bytes = new Uint8Array(Buffer.concat(chunks));
         r.blobs.set(id, bytes);
         r.blobBytes += bytes.byteLength;
+        store?.saveBlob(roomName, id, bytes);
         log(`▣ blob ${id.slice(0, 8)}… stored on ${roomName} (${bytes.byteLength} B, ${r.blobs.size} total)`);
         res.writeHead(200).end("ok");
       });
@@ -318,6 +339,7 @@ export function startRelay(opts: RelayOptions): Promise<RelayHandle> {
           if (joined.seen.has(op.id)) return; // dedupe replayed ops
           joined.seen.add(op.id);
           joined.ops.push(op);
+          store?.appendOp(joinedName, op);
           broadcast(joined, { t: "op", op }, ws);
           // Notify any registered members who aren't connected right now.
           const sender = joined.clients.get(ws)?.handle ?? (op as { author?: string }).author ?? "someone";
@@ -330,6 +352,7 @@ export function startRelay(opts: RelayOptions): Promise<RelayHandle> {
           if (joined.ledgerSeen.has(op.id)) return;
           joined.ledgerSeen.add(op.id);
           joined.ledgerOps.push(op);
+          store?.appendLedger(joinedName, op);
           broadcast(joined, { t: "ledger", op }, ws);
           return;
         }
@@ -339,6 +362,7 @@ export function startRelay(opts: RelayOptions): Promise<RelayHandle> {
           if (joined.checkpointSeen.has(op.id)) return;
           joined.checkpointSeen.add(op.id);
           joined.checkpointOps.push(op);
+          store?.appendCheckpoint(joinedName, op);
           broadcast(joined, { t: "checkpoint", op }, ws);
           return;
         }

@@ -7,11 +7,13 @@
 //   quorum providers                            list installable providers
 //   quorum --help                               usage
 
-import { networkInterfaces } from "node:os";
+import { networkInterfaces, homedir } from "node:os";
+import { join as pathJoin } from "node:path";
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { providers, getProvider } from "./providers/index.js";
 import { startRelay } from "./relay/server.js";
+import { FileRelayStore } from "./relay/store.js";
 import { deriveAuthToken } from "./net/crypto.js";
 import { readManifest, streamFrames } from "./session/qdag.js";
 import { FileRoomStore } from "./session/store.js";
@@ -98,6 +100,11 @@ function lanAddresses(): string[] {
   return out;
 }
 
+/** Where `quorum host --persist` keeps room logs + blobs by default. */
+function defaultRelayStoreDir(): string {
+  return pathJoin(homedir(), ".quorum", "relay");
+}
+
 async function host(args: string[]): Promise<void> {
   const { flags } = parse(args);
   const requested = Number(flags.port ?? 8787);
@@ -106,12 +113,19 @@ async function host(args: string[]): Promise<void> {
   const open = "open" in flags;
   const key = open ? undefined : (flags.key || randomBytes(8).toString("base64url"));
 
+  // Optional durability: --persist [dir] keeps the room logs + blobs on disk so
+  // the relay reloads them on restart, even with nobody online. The stored bytes
+  // are ciphertext — the relay still can't read them.
+  const persistDir = "persist" in flags ? (typeof flags.persist === "string" && flags.persist ? flags.persist : defaultRelayStoreDir()) : undefined;
+  const store = persistDir ? new FileRelayStore(persistDir) : undefined;
+
   // The relay only ever holds the derived auth token, never the room key — so it
   // can gate joins but can't decrypt the end-to-end-encrypted traffic.
   const spinner = new Spinner("starting relay");
   spinner.start();
-  const { port } = await startRelay({ port: requested, authToken: deriveAuthToken(key), verbose: true });
+  const { port } = await startRelay({ port: requested, authToken: deriveAuthToken(key), verbose: true, store });
   spinner.stop();
+  if (persistDir) console.error(style.dim(`  persisting to ${persistDir}`));
 
   const ips = lanAddresses();
   const keyFlag = key ? ` --key ${key}` : "";

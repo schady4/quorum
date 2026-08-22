@@ -5,12 +5,23 @@
   "author": "Jarett Schadlich",
   "license": "CC-BY-NC-4.0",
   "type": "module",
+  "main": "./dist/sdk.js",
+  "types": "./dist/sdk.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/sdk.d.ts",
+      "import": "./dist/sdk.js"
+    },
+    "./package.json": "./package.json"
+  },
   "bin": {
     "quorum": "./dist/cli.js"
   },
   "files": [
     "dist",
     "README.md",
+    "PROTOCOL.md",
+    "SAVE-FORMAT.md",
     "LICENSE"
   ],
   "engines": {
@@ -48,7 +59,9 @@
     "test:vanish": "tsx test/vanish.test.ts",
     "test:tui": "tsx test/tui.test.ts",
     "test:style": "tsx test/style.test.ts",
-    "test:all": "npm run test && npm run test:net && npm run test:agent && npm run test:delegate && npm run test:ledger && npm run test:session && npm run test:config && npm run test:router && npm run test:responder && npm run test:durable && npm run test:reconnect && npm run test:auth && npm run test:keepalive && npm run test:e2e && npm run test:vanish && npm run test:tui && npm run test:style",
+    "test:sdk": "tsx test/sdk.test.ts",
+    "test:persist": "tsx test/persist.test.ts",
+    "test:all": "npm run test && npm run test:net && npm run test:agent && npm run test:delegate && npm run test:ledger && npm run test:session && npm run test:config && npm run test:router && npm run test:responder && npm run test:durable && npm run test:reconnect && npm run test:auth && npm run test:keepalive && npm run test:e2e && npm run test:vanish && npm run test:tui && npm run test:style && npm run test:sdk && npm run test:persist",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [

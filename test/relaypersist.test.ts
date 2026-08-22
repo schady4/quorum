@@ -10,7 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { startRelay } from "../src/relay/server.js";
 import { RoomClient } from "../src/net/client.js";
-import { FileRelayStore } from "../src/relay/store.js";
+import { FileRelayStore, MemoryRelayStore, type RelayStore } from "../src/relay/store.js";
 import { deriveAuthToken, roomCrypto } from "../src/net/crypto.js";
 import { putBlob, getBlob, blobBaseUrl } from "../src/net/blob.js";
 import type { PushMessage } from "../src/net/push.js";
@@ -107,6 +107,22 @@ async function main(): Promise<void> {
   bob.close();
   await relay2.close();
   fs.rmSync(dir, { recursive: true, force: true });
+
+  // --- blob retention: oldest evicted past the per-room cap -----------------
+  const retentionDir = fs.mkdtempSync(path.join(os.tmpdir(), "quorum-retain-"));
+  const cases: [string, RelayStore][] = [
+    ["memory", new MemoryRelayStore({ maxRoomBlobBytes: 250 })],
+    ["file", new FileRelayStore(retentionDir, { maxRoomBlobBytes: 250 })],
+  ];
+  for (const [label, s] of cases) {
+    s.saveBlob("r", "a", new Uint8Array(100)); // oldest
+    s.saveBlob("r", "b", new Uint8Array(100));
+    s.saveBlob("r", "c", new Uint8Array(100)); // pushes total to 300 > 250
+    check(`${label}: room blob bytes stay under the cap`, s.blobBytes("r") <= 250);
+    check(`${label}: the oldest blob was evicted`, s.loadBlob("r", "a") === null);
+    check(`${label}: the newest blob is kept`, s.loadBlob("r", "c") !== null);
+  }
+  fs.rmSync(retentionDir, { recursive: true, force: true });
 
   console.log(`\n${passed} passed, ${failures.length} failed`);
   if (failures.length) process.exit(1);

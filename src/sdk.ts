@@ -27,7 +27,7 @@
 export { startRelay } from "./relay/server.js";
 export type { RelayHandle, RelayOptions } from "./relay/server.js";
 export { MemoryRelayStore, FileRelayStore } from "./relay/store.js";
-export type { RelayStore, RoomLog } from "./relay/store.js";
+export type { RelayStore, RelayStoreOptions, RoomLog, MemberState } from "./relay/store.js";
 export { RoomClient } from "./net/client.js";
 export type { RoomClientEvents } from "./net/client.js";
 

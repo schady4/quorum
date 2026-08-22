@@ -123,6 +123,9 @@ export function startRelay(opts: RelayOptions): Promise<RelayHandle> {
       const members = store.loadMembers(name);
       for (const [handle, tokens] of Object.entries(members.pushTokens)) r.pushTokens.set(handle, new Set(tokens));
       for (const handle of members.muted) r.muted.add(handle);
+      // Restore the blob byte counter so the in-memory PUT cap is accurate after
+      // a restart (blobs themselves load lazily from the store on GET).
+      r.blobBytes = store.blobBytes(name);
     }
   }
 

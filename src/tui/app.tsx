@@ -30,6 +30,7 @@ import { loadCredentials, missingRequired, testProvider } from "../config/creden
 import { loadStore, saveStore } from "../config/store.js";
 import { sessionFromClient } from "../session/qdag.js";
 import { isLastHuman, savePrompt, saveSessionToDir, reviveHint } from "../session/torchbearer.js";
+import type { RoomStore } from "../session/store.js";
 
 function colorFor(author: string): (typeof INK_HANDLE_PALETTE)[number] {
   return INK_HANDLE_PALETTE[hueIndex(author, INK_HANDLE_PALETTE.length)];
@@ -517,10 +518,13 @@ export interface RoomViewProps {
   /** Called once, when the client first connects — used by `quorum open` to
    *  replay a saved bond into the freshly created room. */
   onFirstOpen?: (client: RoomClient) => void;
+  /** Durable store; when set, the client persists frames and restores/re-seeds. */
+  store?: RoomStore;
 }
 
-export function runTui({ relayUrl, room, handle, key, resolver, onFirstOpen }: RoomViewProps): void {
+export function runTui({ relayUrl, room, handle, key, resolver, onFirstOpen, store }: RoomViewProps): void {
   const client = new RoomClient(relayUrl, room, handle, key);
+  if (store) client.store = store;
   if (onFirstOpen) client.once("open", () => onFirstOpen(client));
   client.connect();
   render(<App client={client} resolver={resolver} />);

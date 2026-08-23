@@ -310,7 +310,9 @@ npm run typecheck
 
 ## License
 
-Licensed under [Creative Commons Attribution-NonCommercial 4.0 International
-(CC BY-NC 4.0)](LICENSE) © Jarett Schadlich. You may share and adapt the work
-with attribution, but **not for commercial purposes** — commercial use requires
-separate permission from Jarett Schadlich.
+Licensed under the [Apache License 2.0](LICENSE) © 2026 Jarett Schadlich — a
+permissive open-source license with an explicit patent grant, so you're free to
+use, modify, and build on Quorum (including commercially) as long as you keep the
+license and attribution notices. See [`NOTICE`](NOTICE) for attribution and
+[`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md) for the licenses of bundled
+dependencies.

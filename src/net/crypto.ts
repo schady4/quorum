@@ -68,10 +68,35 @@ export const OPEN_ROOM: RoomCrypto = {
   decBytes: (b) => b,
 };
 
+// scrypt is deliberately slow (RFC 7914 defaults, ~16MB working set) so a
+// human-chosen secret costs real work to brute-force. On the pure-JS React
+// Native backend (no native scrypt) that cost is real wall-clock time — and
+// every roomCrypto() call re-pays it for the same secret, including the
+// redundant one RoomClient's constructor makes on top of the app's own. Cache
+// the master key per secret so a legitimate repeat call (the common case: the
+// same room reopened, or RoomClient re-deriving what the app already has) is
+// instant. A wrong guess is still a cache miss and still pays full cost, so
+// this doesn't weaken the KDF's brute-force resistance. Bounded + LRU-ish so a
+// long-running process doesn't grow this unboundedly.
+const MASTER_CACHE_MAX = 32;
+const masterCache = new Map<string, Uint8Array>();
+
 function master(secret: string): Uint8Array {
+  const cached = masterCache.get(secret);
+  if (cached) {
+    masterCache.delete(secret); // bump to most-recently-used
+    masterCache.set(secret, cached);
+    return cached;
+  }
   // scrypt first so a human-chosen key still costs work to attack; HKDF then
   // splits the master into independent subkeys.
-  return backend.scrypt(utf8(secret), MASTER_SALT, 32);
+  const m = backend.scrypt(utf8(secret), MASTER_SALT, 32);
+  if (masterCache.size >= MASTER_CACHE_MAX) {
+    const oldest = masterCache.keys().next().value;
+    if (oldest !== undefined) masterCache.delete(oldest);
+  }
+  masterCache.set(secret, m);
+  return m;
 }
 function sub(m: Uint8Array, info: string): Uint8Array {
   return backend.hkdf(m, MASTER_SALT, utf8(info), 32);

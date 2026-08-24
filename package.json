@@ -1,6 +1,6 @@
 {
   "name": "@schady4/quorum",
-  "version": "0.4.4",
+  "version": "0.4.5",
   "description": "Multiplayer AI in your terminal — friends and multiple AI models share one live chat session on a CRDT + DAG substrate. Model-agnostic, MCP-native.",
   "author": "Jarett Schadlich",
   "license": "Apache-2.0",

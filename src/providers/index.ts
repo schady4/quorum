@@ -6,9 +6,11 @@ import { anthropic } from "./anthropic.js";
 import { openai } from "./openai.js";
 import { meta } from "./meta.js";
 import { kimi } from "./kimi.js";
+import { grok } from "./grok.js";
+import { glm } from "./glm.js";
 import { local } from "./local.js";
 
-export const providers: ProviderAdapter[] = [anthropic, openai, meta, kimi, local];
+export const providers: ProviderAdapter[] = [anthropic, openai, meta, kimi, grok, glm, local];
 
 export function getProvider(id: string): ProviderAdapter | undefined {
   return providers.find((p) => p.id === id);

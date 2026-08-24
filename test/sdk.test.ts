@@ -35,6 +35,13 @@ async function main(): Promise<void> {
   const token = deriveAuthToken("hunter2");
   check("deriveAuthToken yields a non-empty token", token.length > 0);
   check("roomCrypto seals and opens a round-trip", roomCrypto("hunter2", "lobby").dec(roomCrypto("hunter2", "lobby").enc("hi")) === "hi");
+  // A keyed room's dec() must never render an unsealed blob as trusted text —
+  // that's the gap that would let anyone admitted to the relay (an open relay
+  // especially) inject plain text that renders identically to a real,
+  // encrypted message. Only an actually-open (keyless) room may pass
+  // plaintext through.
+  check("a keyed room drops an unsealed blob instead of trusting it", roomCrypto("hunter2", "lobby").dec("gotcha, i'm not really encrypted") === "");
+  check("an open (keyless) room still passes plaintext through", roomCrypto(undefined, "lobby").dec("hi") === "hi");
 
   // Host a bus and join it as a human/bridge-style seat — SDK only.
   const relay = await startRelay({ port: 0 });

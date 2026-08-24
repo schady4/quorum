@@ -127,7 +127,13 @@ export function roomCrypto(secret: string | undefined, room: string): RoomCrypto
       return PREFIX + b64(blob);
     },
     dec(blob: string): string {
-      if (!blob.startsWith(PREFIX)) return blob; // tolerate plaintext (open peer)
+      // A keyed room's dec() must never render an unsealed blob as trusted
+      // text — that's exactly the gap that would let anyone connected to the
+      // relay (an open relay especially) inject a plain string that renders
+      // identically to a real, encrypted message. Only OPEN_ROOM's identity
+      // dec (an actually-keyless room) may pass plaintext through; here,
+      // anything not sealed for this room is dropped rather than displayed.
+      if (!blob.startsWith(PREFIX)) return "";
       const raw = unb64(blob.slice(PREFIX.length));
       const iv = raw.subarray(0, 12);
       const tag = raw.subarray(12, 28);

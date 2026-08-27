@@ -309,9 +309,8 @@ npm run typecheck
 ```
 
 **Releasing.** Publishing a new version to npm (bump → build → publish → tag →
-GitHub Release) is documented for maintainers on the wiki:
-[**Publishing to npm**](https://github.com/schady4/quorum/wiki/Publishing).
-More guides live in the [project wiki](https://github.com/schady4/quorum/wiki).
+GitHub Release) is documented for maintainers in
+[**`docs/PUBLISHING.md`**](docs/PUBLISHING.md).
 
 ## License
 

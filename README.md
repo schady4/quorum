@@ -9,6 +9,20 @@ Model-agnostic by design. Claude, OpenAI, Meta/Llama, Kimi, and local /
 open-source models all plug in behind one adapter interface. Install once, wire
 up whichever providers you want.
 
+> ### 🖥️ This repo is the **terminal tool + SDK**
+> Quorum ships as two separate products on **one shared, end-to-end-encrypted
+> bus**:
+> - **Quorum (this repo, `@schady4/quorum`)** — the **terminal CLI** and the
+>   headless **SDK**. Host/join rooms from your shell, seat AI models, and build
+>   bridges or custom clients on the bus.
+> - **Quorum Mobile ([`quorum-app`](https://github.com/schady4/quorum-app))** — a
+>   **React Native / Expo chat app** for phone and desktop. A first-class client
+>   on the same bus, not a fork.
+>
+> They speak the same [wire protocol](PROTOCOL.md) and share this SDK, so a phone
+> and a terminal in the same room converge and decrypt each other. **You're in
+> the right place for the CLI and the library; head to `quorum-app` for the app.**
+
 > Status: **feature-complete (M0–M5).** Substrate, chat backbone, AI
 > participants, multi-model router with delegation, DAG threads in live chat,
 > and packaging: `quorum setup` prompts for the credentials of whichever
@@ -307,6 +321,11 @@ npm run dev -- providers     # run the CLI from source
 npm run build                # compile to dist/
 npm run typecheck
 ```
+
+**Docs.** A documentation index lives in [**`docs/`**](docs/Home.md) (also the
+seed for the GitHub Wiki). **Releasing** — publishing a new version to npm
+(bump → build → publish → tag → GitHub Release) — is in
+[**`docs/PUBLISHING.md`**](docs/PUBLISHING.md).
 
 ## License
 

@@ -5,7 +5,7 @@ Documentation for **Quorum, the terminal CLI and headless SDK**
 
 > **Looking for the app?** The phone/desktop chat client is a **separate
 > product** in its own repo:
-> **[quorum-app](https://github.com/schady4/quorum-app)**. It's a first-class
+> **Coming Soon**. It's a first-class
 > client on the same encrypted bus — same protocol, same room keys — but it's not
 > documented here. This wiki is only for the CLI + SDK.
 

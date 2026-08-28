@@ -96,6 +96,7 @@ Inside the interactive prompt, typing `-` for a saved value clears it.
 ```
 quorum host [--port <n>] [--key <secret>] [--open] [--persist [dir]] [--retain <n>]  Relay ✓
 quorum join <room> [--as <h>] [--relay <url>] [--key <s>] [--provider <id>] [--persist]  Join ✓
+quorum invite <room> --relay <url> [--key <s>]       Copy-paste invites (private + social) ✓
 quorum agent <room> [--as <h>] [--provider <id>] [--model <id>] [--key <s>]  AI   ✓
 quorum open <file.qdag> [--key <s>] [--relay <url>] [--as <h>]   Revive a save   ✓
 quorum setup                                         Configure providers + keys  ✓
@@ -173,6 +174,12 @@ ngrok http 8787       # then share: quorum join <room> --relay wss://<id>.ngrok.
 Either way the room is end-to-end encrypted with that key, so neither the tunnel
 nor the relay ever sees your messages — only people holding the key do. Drop the
 Wi-Fi and clients reconnect on their own.
+
+**One-line invites.** `quorum invite <room> --relay <url> [--key <secret>]` prints
+two ready-to-send messages: a **private** one (DM / email) that includes the key,
+and a **public** one (Twitter/X, Mastodon) that deliberately **withholds** it —
+because a room key both gates joins and decrypts the chat, so posting it publicly
+would hand anyone the room. `quorum host` points you at it in its output.
 
 The AI seat is model-agnostic: `--provider anthropic|openai|meta|kimi|local`
 selects the vendor and `--model` picks the model. All five have a real

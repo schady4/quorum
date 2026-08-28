@@ -24,6 +24,7 @@ import { createMergeResolver } from "./agent/merge.js";
 import { loadCredentials, missingRequired, testProvider } from "./config/credentials.js";
 import { runSetup } from "./config/setup.js";
 import { style, box, Spinner, colorForHandle } from "./ui/style.js";
+import { privateInvite, socialInvite, type InviteInput } from "./ui/invite.js";
 
 const [, , cmd, ...rest] = process.argv;
 
@@ -51,6 +52,8 @@ Usage:
                                                Join a room (--persist keeps a local encrypted backup)
   ${cmd("quorum agent")} <room> [--as <handle>] [--key <secret>] [--provider <id>] [--model <id>] [--relay <url>]
                                                Seat an AI participant in a room
+  ${cmd("quorum invite")} <room> --relay <url> [--key <secret>]
+                                               Print copy-paste invites (private + social) to grow a room
   ${cmd("quorum open")} <file.qdag> [--key <secret>] [--relay <url>] [--as <handle>] [--room <name>]
                                                Revive a saved session into a live room
   ${cmd("quorum setup")}                                 Configure model providers + keys (interactive)
@@ -161,7 +164,47 @@ async function host(args: string[]): Promise<void> {
     `  ${style.dim(`cloudflared tunnel --url http://localhost:${port}`)}  →  quorum join <room> --relay wss://<id>.trycloudflare.com${keyFlag}`,
   );
   console.error("");
+  console.error(style.bold("Share it:"));
+  console.error(
+    style.dim(`  quorum invite <room> --relay <url>${keyFlag}`) +
+      style.dim("   → a copy-paste invite for friends (private + social)"),
+  );
+  console.error("");
   // startRelay keeps the process alive via the open server.
+}
+
+/** `quorum invite <room> --relay <url> [--key <secret>]` — print ready-to-send
+ *  invites: a private one (with the key) and a public/social one (without). */
+function invite(args: string[]): void {
+  const { positionals, flags } = parse(args);
+  const room = positionals[0];
+  const relay = flags.relay;
+  const key = flags.key || undefined;
+  if (!room || !relay) {
+    console.error("Usage: quorum invite <room> --relay <url> [--key <secret>]");
+    console.error(style.dim("  e.g. quorum invite lobby --relay wss://abc123.ngrok.app --key hunter2"));
+    process.exit(1);
+    return;
+  }
+  const input: InviteInput = { room, relay, key };
+
+  // Printed unboxed on purpose: these are meant to be selected and pasted into
+  // a DM or a tweet, so a surrounding box (whose borders you'd copy, and whose
+  // width emoji throw off) would only get in the way.
+  console.log(style.brand(`◇ Invite to ${room}`, process.stdout) + "\n");
+
+  console.log(style.bold("Private", process.stdout) + style.dim("  (DM / email — includes the room key):", process.stdout));
+  console.log(privateInvite(input) + "\n");
+
+  console.log(style.bold("Public", process.stdout) + style.dim("  (Twitter/X, Mastodon — key withheld):", process.stdout));
+  console.log(socialInvite(input) + "\n");
+
+  if (key) {
+    console.log(
+      style.warn("⚠ The room key is a shared secret — it gates joins AND decrypts the chat."),
+    );
+    console.log(style.dim("  Keep it to the private invite; never put it in a public post.", process.stdout));
+  }
 }
 
 function join(args: string[]): void {
@@ -321,6 +364,9 @@ async function main(): Promise<void> {
       break;
     case "join":
       join(rest);
+      break;
+    case "invite":
+      invite(rest);
       break;
     case "open":
       await open(rest);

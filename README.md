@@ -6,6 +6,10 @@ first-class participants: they use tools (MCP), loop, delegate across models, an
 spin up new instances on request. Model-agnostic by design: Claude, OpenAI,
 Meta/Llama, Kimi, and local / open-source models all plug in behind one adapter.
 
+[![npm](https://img.shields.io/npm/v/@schady4/quorum?color=0A84FF)](https://www.npmjs.com/package/@schady4/quorum)
+[![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+[![docs](https://img.shields.io/badge/docs-wiki-brightgreen)](https://github.com/schady4/quorum/wiki)
+
 > ### 🖥️ This repo is the **terminal tool + SDK**
 > Quorum ships as two products on **one shared, end-to-end-encrypted bus**:
 > - **Quorum (this repo, `@schady4/quorum`)** — the **terminal CLI** and headless
@@ -16,10 +20,23 @@ Meta/Llama, Kimi, and local / open-source models all plug in behind one adapter.
 > Same [wire protocol](PROTOCOL.md), same room keys — a phone and a terminal in
 > the same room converge and decrypt each other.
 
-Rooms are **secure by default** — one shared key both gates joins and end-to-end
-encrypts the traffic, so the relay is a zero-knowledge mailbox — and clients
-**auto-reconnect** through drops. Feature-complete (M0–M5), 239 tests. Built by
-**Jarett Schadlich**.
+## Highlights
+
+- **One converged room** — every terminal is a CRDT replica, so windows stay in
+  sync even under lag, with a DAG ledger tracking who (human or which model) said
+  what.
+- **AI seats, model-agnostic** — Claude, GPT, Llama, Kimi, or a local model join
+  as real participants. `@mention` to talk; they use MCP tools, loop, and can
+  **delegate** subtasks to other models.
+- **Secure by default** — one shared key gates joins *and* end-to-end-encrypts the
+  traffic (AES-256-GCM). The relay is a **zero-knowledge mailbox** that only ever
+  holds sealed bytes.
+- **Fork / merge threads** — branch a shared decision-state and reconcile it back;
+  incompatible edits escalate to a single AI arbitration call.
+- **Save & revive** — portable, encrypted `.qdag` session bonds plus per-client
+  durability; bring a whole conversation back to life with `quorum open`.
+- **Build on the bus** — it's a headless SDK first. A phone app, a Slack/Discord
+  bridge, or a custom client are all just **seats on the same bus**.
 
 ## Quickstart
 
@@ -38,12 +55,14 @@ ANTHROPIC_API_KEY=sk-... \
 ```
 
 Type in your seat; both windows converge. Say `@claude …` to talk to the AI.
+Hosting for friends? `quorum host` prints an invite, and `quorum invite` turns it
+into a copy-paste message.
 
 ## 📖 Documentation
 
 Full docs live in the **[Wiki](https://github.com/schady4/quorum/wiki)**:
 
-| | |
+| Page | What's in it |
 |---|---|
 | **[Getting Started](https://github.com/schady4/quorum/wiki/Getting-Started)** | Install, `quorum setup`, managing provider keys |
 | **[CLI Reference](https://github.com/schady4/quorum/wiki/CLI-Reference)** | Every command + flag: `host` / `join` / `agent` / `invite` / `open` / `setup` |
@@ -54,10 +73,10 @@ Full docs live in the **[Wiki](https://github.com/schady4/quorum/wiki)**:
 | **[Providers](https://github.com/schady4/quorum/wiki/Providers)** | Add a model vendor by implementing one adapter |
 | **[Publishing to npm](https://github.com/schady4/quorum/wiki/Publishing)** | Maintainer release process |
 
-Deeper references also in-repo: the wire contract in [PROTOCOL.md](PROTOCOL.md)
-and the on-disk format in [SAVE-FORMAT.md](SAVE-FORMAT.md). The wiki's source
-lives under [`docs/wiki/`](docs/wiki/) (see [`docs/wiki/README.md`](docs/wiki/README.md)
-for how it's published).
+Deeper references live in-repo: the wire contract in [PROTOCOL.md](PROTOCOL.md)
+and the on-disk format in [SAVE-FORMAT.md](SAVE-FORMAT.md). The wiki's source is
+versioned under [`docs/wiki/`](docs/wiki/) — edit there and run
+`bash docs/wiki/publish.sh` to sync.
 
 ## License
 
@@ -66,3 +85,5 @@ permissive open-source license with an explicit patent grant, so you're free to
 use, modify, and build on Quorum (including commercially) as long as you keep the
 license and attribution notices. See [`NOTICE`](NOTICE) and
 [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md).
+
+Built by **Jarett Schadlich**.

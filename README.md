@@ -71,6 +71,7 @@ Full docs live in the **[Wiki](https://github.com/schady4/quorum/wiki)**:
 | **[Build on the Bus (SDK)](https://github.com/schady4/quorum/wiki/Build-on-the-Bus)** | The headless library, `RoomClient`/`AgentSeat`, the `/native` entry |
 | **[Saving & Reviving](https://github.com/schady4/quorum/wiki/Saving-and-Reviving)** | `RoomStore` durability and the portable `.qdag` bond |
 | **[Providers](https://github.com/schady4/quorum/wiki/Providers)** | Add a model vendor by implementing one adapter |
+| **[Slack Bridge](https://github.com/schady4/quorum/wiki/Slack-Bridge)** | Design/RFC: a self-hosted Slack ⟷ Quorum bridge |
 | **[Publishing to npm](https://github.com/schady4/quorum/wiki/Publishing)** | Maintainer release process |
 
 Deeper references live in-repo: the wire contract in [PROTOCOL.md](PROTOCOL.md)

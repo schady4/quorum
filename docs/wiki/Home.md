@@ -40,6 +40,7 @@ so convergence still works.
 | **[Build on the Bus (SDK)](Build-on-the-Bus)** | The headless library, `RoomClient`/`AgentSeat`, the `/native` entry, the wire protocol |
 | **[Saving & Reviving](Saving-and-Reviving)** | `RoomStore` durability and the portable `.qdag` bond |
 | **[Providers](Providers)** | Add a model vendor by implementing one adapter |
+| **[Slack Bridge](Slack-Bridge)** | Design/RFC: a self-hosted Slack ⟷ Quorum bridge |
 | **[Publishing to npm](Publishing)** | Maintainer release process |
 
 ## License

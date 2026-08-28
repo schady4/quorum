@@ -14,6 +14,9 @@
 - [Build on the Bus (SDK)](Build-on-the-Bus)
 - [Providers](Providers)
 
+**Design / RFCs**
+- [Slack Bridge](Slack-Bridge)
+
 **Maintainers**
 - [Publishing to npm](Publishing)
 

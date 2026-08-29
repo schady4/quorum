@@ -1,8 +1,11 @@
-# Slack Bridge (design)
+# Slack Bridge
 
-> Status: **design / RFC.** Not implemented yet. The committed approach is a
-> **self-hosted, single-workspace** bridge — the lowest policy surface and the one
-> that fits Quorum's self-hosted ethos.
+> Status: **v1 shipped** (`quorum bridge slack`). Text both ways, per-user
+> identity, the `/quorum` command set, and the full crash-safe continuity model
+> below are implemented; the v2 items (edits/reactions/attachments/threads) are
+> still ahead. The committed approach is a **self-hosted, single-workspace**
+> bridge — the lowest policy surface and the one that fits Quorum's self-hosted
+> ethos. See "[Run the bridge (v1)](#run-the-bridge-v1)" to stand one up.
 
 A Slack bridge is a **third kind of seat on the bus** (after the terminal and the
 mobile app): a persisting `RoomClient` that relays **one Slack channel ⟷ one
@@ -139,17 +142,72 @@ questionnaire, published privacy policy, OAuth justification, and hard scrutiny 
 the egress + AI). Approvable with strong consent UX + a real privacy policy +
 no-train guarantees, but it's a deliberate later compliance project, not v1.
 
+## Run the bridge (v1)
+
+The bridge runs on a **trusted host you control** — the machine that holds the
+room key and the AI provider credentials. Nothing secret is ever sent to Slack.
+
+**1. Create a single-workspace Slack app** (no Marketplace review). In your
+workspace, create a custom app, enable **Socket Mode**, and add a slash command
+`/quorum`. Grant only the scopes v1 needs:
+
+```
+commands            # the /quorum slash command
+channels:history    # read the bridged channel
+channels:read       # resolve the channel
+chat:write          # post relayed messages
+users:read          # map Slack users → stable Quorum handles (Model B)
+```
+
+Install it to the workspace, then collect the **Bot token** (`xoxb-…`) and an
+**App-level token** with `connections:write` (`xapp-…`), and invite the bot to
+the channel you want to bridge.
+
+**2. Install the optional bridge dependency** on the host (it's an *optional peer
+dependency*, so it never bloats the SDK or the app bundle):
+
+```bash
+npm i @slack/bolt
+```
+
+**3. Point it at a room and run it.** The room key stays on this host:
+
+```bash
+export SLACK_BOT_TOKEN=xoxb-…
+export SLACK_APP_TOKEN=xapp-…
+export SLACK_CHANNEL=C0123456789        # the channel id to bridge
+export QUORUM_ROOM=lobby
+export QUORUM_RELAY=wss://your-relay.example        # default ws://localhost:8787
+export QUORUM_KEY=your-room-key                     # omit for an open room
+quorum bridge slack
+```
+
+Optional: `SLACK_CHANNEL_NAME` (nicer banners), `QUORUM_BRIDGE_STATE` (where
+cursors + the durable room log live; default `~/.quorum/bridge/<room>-<channel>`),
+and `QUORUM_AGENT_PROVIDER` / `QUORUM_AGENT_MODEL` (defaults for `/quorum agent`).
+AI seats summoned from Slack run on **this host** using its own `quorum setup`
+credentials — Slack users never see or supply a key.
+
+**Using it from Slack:** talk to AIs as plain chat (`@claude summarize this`);
+run structured actions under the one command (`/quorum agent claude`,
+`/quorum fork A B`, `/quorum status`, …). `/quorum key …` is refused by design.
+
 ## Fidelity roadmap
 
-- **v1** — text both ways, per-user identity, `/quorum` commands, the full
-  continuity + durability model above. Correct before rich.
+- **v1 — shipped.** Text both ways, per-user identity, `/quorum` commands, and the
+  full continuity + durability model above. Correct before rich.
 - **v2** — map Quorum control messages ↔ Slack **edits/deletes/reactions** (so the
   AI never acts on stale text), **blob attachments** ↔ `files.upload`, replies ↔
   Slack threads.
 
 ## Packaging
 
-Ship as a **separate package** (`@schady4/quorum-slack` / a `quorum bridge slack`
-entry) so `@slack/bolt` stays out of the core bundle. The bridge depends only on
-the SDK's public surface (`RoomClient`, room crypto, control codecs) — a reference
-consumer of "build on the bus," nothing privileged.
+v1 ships **in-tree** under `quorum bridge slack`, but `@slack/bolt` is declared an
+**optional peer dependency** and loaded via a dynamic import, so it stays out of
+the core SDK and the mobile-app bundle exactly as if it were a separate package —
+only the bridge host ever installs it. The engine (`src/bridge/slack/core.ts`)
+depends only on the SDK's public surface (`RoomClient`, room crypto, control
+codecs) and takes an injected Slack gateway, so it's a reference consumer of
+"build on the bus," fully unit-tested with fakes, nothing privileged. Splitting it
+into its own `@schady4/quorum-slack` package later is a mechanical move if the
+dependency ever needs to version independently.

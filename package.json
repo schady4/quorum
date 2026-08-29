@@ -92,10 +92,11 @@
     "test:summary": "tsx test/summary.test.ts",
     "test:relaypersist": "tsx test/relaypersist.test.ts",
     "test:compaction": "tsx test/compaction.test.ts",
-    "test:all": "npm run test && npm run test:net && npm run test:agent && npm run test:delegate && npm run test:ledger && npm run test:session && npm run test:config && npm run test:router && npm run test:responder && npm run test:durable && npm run test:reconnect && npm run test:auth && npm run test:keepalive && npm run test:e2e && npm run test:vanish && npm run test:tui && npm run test:style && npm run test:sdk && npm run test:persist && npm run test:torchbearer && npm run test:revive && npm run test:restore && npm run test:native && npm run test:signal && npm run test:blob && npm run test:push && npm run test:summary && npm run test:relaypersist && npm run test:compaction && npm run test:invite",
+    "test:all": "npm run test && npm run test:net && npm run test:agent && npm run test:delegate && npm run test:ledger && npm run test:session && npm run test:config && npm run test:router && npm run test:responder && npm run test:durable && npm run test:reconnect && npm run test:auth && npm run test:keepalive && npm run test:e2e && npm run test:vanish && npm run test:tui && npm run test:style && npm run test:sdk && npm run test:persist && npm run test:torchbearer && npm run test:revive && npm run test:restore && npm run test:native && npm run test:signal && npm run test:blob && npm run test:push && npm run test:summary && npm run test:relaypersist && npm run test:compaction && npm run test:invite && npm run test:bridge",
     "typecheck": "tsc --noEmit",
     "test:restore": "tsx test/restore.test.ts",
-    "test:invite": "tsx test/invite.test.ts"
+    "test:invite": "tsx test/invite.test.ts",
+    "test:bridge": "tsx test/bridge.test.ts"
   },
   "keywords": [
     "multiplayer-ai",
@@ -122,5 +123,14 @@
     "ink": "^7.1.1",
     "react": "^19.2.8",
     "ws": "^8.21.3"
+  },
+  "//bridge": "@slack/bolt powers `quorum bridge slack` only. It's an OPTIONAL peer dep so it stays out of every SDK/app bundle — install it on the bridge host with `npm i @slack/bolt`. The bridge dynamic-imports it and fails gracefully if it's absent.",
+  "peerDependencies": {
+    "@slack/bolt": "^4.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@slack/bolt": {
+      "optional": true
+    }
   }
 }

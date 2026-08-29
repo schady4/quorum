@@ -9,6 +9,7 @@ quorum open   <file.qdag> [--key <s>] [--relay <url>] [--as <h>] [--room <name>]
 quorum setup                                        Configure providers + keys (interactive)
 quorum setup  --status | --unset <provider> | --wipe    Inspect / remove / reset credentials
 quorum providers                                    List installable providers
+quorum bridge slack                                 Relay a Slack channel ⟷ a Quorum room (Socket Mode)
 quorum --help                                       Usage
 ```
 
@@ -61,6 +62,17 @@ Revive a saved `.qdag` session into a live room — see
 Configure and inspect provider credentials — see
 [Getting Started](Getting-Started) — and list installable providers with their
 models and required keys.
+
+## bridge slack
+
+Relay one Slack channel ⟷ one Quorum room, bidirectionally, over Slack **Socket
+Mode** (no public URL). Config is read from the environment
+(`SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `SLACK_CHANNEL`, `QUORUM_ROOM`, plus
+`QUORUM_RELAY` / `QUORUM_KEY`); `@slack/bolt` is an optional peer dependency you
+install on the bridge host (`npm i @slack/bolt`). The room key stays on the host
+and is **never sent to Slack**; `/quorum key …` is refused by design. Full setup,
+scopes, and the identity/durability model are on the
+[Slack Bridge](Slack-Bridge) page.
 
 ## In-window keys
 

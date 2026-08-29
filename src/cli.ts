@@ -61,6 +61,7 @@ Usage:
   ${cmd("quorum setup --unset")} <provider>              Remove one provider's saved keys
   ${cmd("quorum setup --wipe")} [--yes]                  Delete all saved credentials
   ${cmd("quorum providers")}                             List installable model providers
+  ${cmd("quorum bridge slack")}                          Relay one Slack channel ⟷ one Quorum room (Socket Mode)
   ${cmd("quorum --help")}                                Show this help
 
 ${style.dim("Try it locally: run `quorum host --open`, then `quorum join lobby --as you` in", process.stdout)}
@@ -354,10 +355,47 @@ async function open(args: string[]): Promise<void> {
   runTui({ relayUrl, room, handle, key, resolver, onFirstOpen: seed });
 }
 
+/** `quorum bridge slack` — relay one Slack channel ⟷ one Quorum room. Config is
+ *  read from the environment (SLACK_BOT_TOKEN / SLACK_APP_TOKEN / SLACK_CHANNEL /
+ *  QUORUM_ROOM …). The room key stays on this host, never in Slack. */
+async function bridge(args: string[]): Promise<void> {
+  const { positionals } = parse(args);
+  const target = positionals[0];
+  if (target !== "slack") {
+    console.error("Usage: quorum bridge slack\n\nRelays one Slack channel ⟷ one Quorum room. See the Slack Bridge wiki page.");
+    process.exit(1);
+  }
+  // Loaded lazily so @slack/bolt (an optional peer dep) is only required when the
+  // bridge actually runs — the rest of the CLI never pulls it in.
+  const { runSlackBridge, configFromEnv } = await import("./bridge/slack/bolt.js");
+  let config;
+  try {
+    config = configFromEnv();
+  } catch (err) {
+    console.error(style.err(err instanceof Error ? err.message : String(err)));
+    process.exit(1);
+  }
+  console.error(
+    box(
+      [
+        `#${config.channelName ?? config.channelId} ${style.dim("⟷", process.stderr)} ${style.bold(config.room)}`,
+        style.dim(`relay ${config.relayUrl}${config.key ? " · 🔒 keyed" : ""}`, process.stderr),
+        style.dim("keys stay on this host — never sent to Slack", process.stderr),
+      ],
+      { title: "quorum bridge · slack", stream: process.stderr },
+    ),
+  );
+  await runSlackBridge(config);
+  console.error(style.ok("✓ bridge live (Socket Mode). Ctrl-C to stop."));
+}
+
 async function main(): Promise<void> {
   switch (cmd) {
     case "providers":
       await listProviders();
+      break;
+    case "bridge":
+      await bridge(rest);
       break;
     case "host":
       await host(rest);
